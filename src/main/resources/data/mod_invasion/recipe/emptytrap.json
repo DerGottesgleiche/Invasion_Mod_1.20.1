@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " X ",
+    "X#X",
+    " X "
+  ],
+  "key": {
+    "X": "minecraft:iron_ingot",
+    "#": "mod_invasion:riftflux"
+  },
+  "result": {
+    "id": "mod_invasion:emptytrap",
+    "count": 1
+  }
+}

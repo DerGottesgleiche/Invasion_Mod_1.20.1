@@ -1,5 +1,5 @@
 package invmod.util;
 
-public abstract interface IPolarAngle {
-	public abstract int getAngle();
+public interface IPolarAngle {
+    int getAngle();
 }

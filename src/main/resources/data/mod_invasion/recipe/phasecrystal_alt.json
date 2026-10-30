@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " # ",
+    "XDX",
+    " # "
+  ],
+  "key": {
+    "X": "minecraft:lapis_lazuli",
+    "#": "minecraft:redstone",
+    "D": "minecraft:diamond"
+  },
+  "result": {
+    "id": "mod_invasion:phasecrystal",
+    "count": 1
+  }
+}

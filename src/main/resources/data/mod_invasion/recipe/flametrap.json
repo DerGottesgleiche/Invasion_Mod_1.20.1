@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    "mod_invasion:emptytrap",
+    "minecraft:lava_bucket"
+  ],
+  "result": {
+    "id": "mod_invasion:flametrap",
+    "count": 1
+  }
+}

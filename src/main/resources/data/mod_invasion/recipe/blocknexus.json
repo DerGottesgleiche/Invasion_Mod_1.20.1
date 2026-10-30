@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " X ",
+    "#D#",
+    " # "
+  ],
+  "key": {
+    "X": "mod_invasion:phasecrystal",
+    "#": "minecraft:redstone",
+    "D": "minecraft:obsidian"
+  },
+  "result": {
+    "id": "mod_invasion:blocknexus",
+    "count": 1
+  }
+}

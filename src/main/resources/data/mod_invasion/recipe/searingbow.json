@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "XXX",
+    "X# ",
+    "X  "
+  ],
+  "key": {
+    "X": "mod_invasion:riftflux",
+    "#": "minecraft:bow"
+  },
+  "result": {
+    "id": "mod_invasion:searingbow",
+    "count": 1
+  }
+}

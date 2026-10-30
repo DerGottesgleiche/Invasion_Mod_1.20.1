@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "X#X"
+  ],
+  "key": {
+    "X": "mod_invasion:riftflux",
+    "#": "minecraft:bone"
+  },
+  "result": {
+    "id": "mod_invasion:strangebone",
+    "count": 1
+  }
+}

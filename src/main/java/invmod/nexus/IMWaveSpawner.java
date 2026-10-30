@@ -1,332 +1,244 @@
 package invmod.nexus;
 
+import invmod.Invasion;
+import invmod.block.NexusBlockEntity;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.Level;
 
-import invmod.mod_invasion;
-import invmod.entity.EntityIMLiving;
-import invmod.entity.monster.EntityIMZombie;
-import invmod.tileentity.TileEntityNexus;
-import invmod.util.ModLogger;
-import net.minecraft.entity.EntityList;
-
+/** Spawns the mobs of the current wave at points on a circle around the nexus. */
 public class IMWaveSpawner implements ISpawnerAccess {
-	private final int MAX_SPAWN_TRIES = 20;
-	private final int NORMAL_SPAWN_HEIGHT = 30;
-	private final int MIN_SPAWN_POINTS_TO_KEEP = 15;
-	private final int MIN_SPAWN_POINTS_TO_KEEP_BELOW_HEIGHT_CUTOFF = 20;
-	private final int HEIGHT_CUTOFF = 35;
-	private final float SPAWN_POINT_CULL_RATE = 0.3F;
-	private SpawnPointContainer spawnPointContainer;
-	private TileEntityNexus nexus;
-	private MobBuilder mobBuilder;
-	private Random rand;
-	private Wave currentWave;
-	private boolean active;
-	private boolean waveComplete;
-	private boolean spawnMode;
-	private boolean debugMode;
-	private int spawnRadius;
-	private int currentWaveNumber;
-	private int successfulSpawns;
-	private long elapsed;
+    private static final int MAX_SPAWN_TRIES = 20;
+    private static final int NORMAL_SPAWN_HEIGHT = 30;
+    private static final int MIN_SPAWN_POINTS_TO_KEEP = 15;
+    private static final int MIN_SPAWN_POINTS_TO_KEEP_BELOW_HEIGHT_CUTOFF = 20;
+    private static final int HEIGHT_CUTOFF = 35;
+    private static final float SPAWN_POINT_CULL_RATE = 0.3F;
 
-	public IMWaveSpawner(TileEntityNexus tileEntityNexus, int radius) {
-		this.nexus = tileEntityNexus;
-		this.active = false;
-		this.waveComplete = false;
-		this.spawnMode = true;
-		this.debugMode = true;
-		this.spawnRadius = radius;
-		this.currentWaveNumber = 1;
-		this.elapsed = 0L;
-		this.successfulSpawns = 0;
-		this.rand = new Random();
-		this.spawnPointContainer = new SpawnPointContainer();
-		this.mobBuilder = new MobBuilder();
-	}
+    private final NexusBlockEntity nexus;
+    private final Random rand = new Random();
+    private SpawnPointContainer spawnPointContainer = new SpawnPointContainer();
+    private Wave currentWave;
+    private boolean active;
+    private boolean waveComplete;
+    private boolean spawnMode = true;
+    private int spawnRadius;
+    private int successfulSpawns;
+    private long elapsed;
 
-	public long getElapsedTime() {
-		return this.elapsed;
-	}
+    public IMWaveSpawner(NexusBlockEntity nexus, int radius) {
+        this.nexus = nexus;
+        this.spawnRadius = radius;
+    }
 
-	public void setRadius(int radius) {
-		if (radius > 8) {
-			this.spawnRadius = radius;
-		}
-	}
+    public long getElapsedTime() {
+        return this.elapsed;
+    }
 
-	public void beginNextWave(int waveNumber) throws WaveSpawnerException {
-		this.beginNextWave(IMWaveBuilder.generateMainInvasionWave(waveNumber));
-	}
+    public void setRadius(int radius) {
+        if (radius > 8) {
+            this.spawnRadius = radius;
+        }
+    }
 
-	public void beginNextWave(Wave wave) throws WaveSpawnerException {
-		if (!this.active) {
-			this.generateSpawnPoints();
-		} else if (this.debugMode) {
-			ModLogger.logDebug("Successful spawns last wave: " + this.successfulSpawns);
-		}
+    public void beginNextWave(int waveNumber) throws WaveSpawnerException {
+        this.beginNextWave(IMWaveBuilder.generateMainInvasionWave(waveNumber));
+    }
 
-		wave.resetWave();
-		this.waveComplete = false;
-		this.active = true;
-		this.currentWave = wave;
-		this.elapsed = 0L;
-		this.successfulSpawns = 0;
+    public void beginNextWave(Wave wave) throws WaveSpawnerException {
+        if (!this.active) {
+            this.generateSpawnPoints();
+        }
+        wave.resetWave();
+        this.waveComplete = false;
+        this.active = true;
+        this.currentWave = wave;
+        this.elapsed = 0L;
+        this.successfulSpawns = 0;
+    }
 
-		if (this.debugMode)
-			ModLogger.logDebug("Defined mobs this wave: " + this.getTotalDefinedMobsThisWave());
-	}
+    public void spawn(int elapsedMillis) throws WaveSpawnerException {
+        this.elapsed += elapsedMillis;
+        if (this.waveComplete || !this.active) {
+            return;
+        }
+        if (this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID) < 10) {
+            this.generateSpawnPoints();
+            if (this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID) < 10) {
+                throw new WaveSpawnerException("Not enough spawn points around the nexus. Is it buried, or is the range too small?");
+            }
+        }
+        this.currentWave.doNextSpawns(elapsedMillis, this);
+        if (this.currentWave.isComplete()) {
+            this.waveComplete = true;
+        }
+    }
 
-	public void spawn(int elapsedMillis) throws WaveSpawnerException {
-		this.elapsed += elapsedMillis;
-		if ((this.waveComplete) || (!this.active)) {
-			return;
-		}
+    /** Fast-forwards a wave without spawning anything; returns how many mobs it would have spawned. */
+    public int resumeFromState(Wave wave, long elapsedTime, int radius) throws WaveSpawnerException {
+        this.spawnRadius = radius;
+        this.stop();
+        this.beginNextWave(wave);
+        this.spawnMode = false;
+        int numberOfSpawns = 0;
+        for (; this.elapsed < elapsedTime; this.elapsed += 100L) {
+            numberOfSpawns += this.currentWave.doNextSpawns(100, this);
+        }
+        this.spawnMode = true;
+        return numberOfSpawns;
+    }
 
-		if (this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID) < 10) {
-			this.generateSpawnPoints();
-			if (this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID) < 10) {
-				throw new WaveSpawnerException("Not enough spawn points for type " + SpawnType.HUMANOID);
-			}
-		}
-		this.currentWave.doNextSpawns(elapsedMillis, this);
-		if (this.currentWave.isComplete())
-			this.waveComplete = true;
-	}
+    public void resumeFromState(int waveNumber, long elapsedTime, int radius) throws WaveSpawnerException {
+        this.resumeFromState(IMWaveBuilder.generateMainInvasionWave(waveNumber), elapsedTime, radius);
+    }
 
-	public int resumeFromState(Wave wave, long elapsedTime, int radius) throws WaveSpawnerException {
-		this.spawnRadius = radius;
-		this.stop();
-		this.beginNextWave(wave);
+    public void stop() {
+        this.active = false;
+    }
 
-		this.setSpawnMode(false);
-		int numberOfSpawns = 0;
-		for (; this.elapsed < elapsedTime; this.elapsed += 100L) {
-			numberOfSpawns += this.currentWave.doNextSpawns(100, this);
-		}
-		this.setSpawnMode(true);
-		return numberOfSpawns;
-	}
+    public boolean isActive() {
+        return this.active;
+    }
 
-	public void resumeFromState(int waveNumber, long elapsedTime, int radius) throws WaveSpawnerException {
-		this.spawnRadius = radius;
-		this.stop();
-		this.beginNextWave(waveNumber);
+    public boolean isReady() {
+        return !this.active && this.nexus.getLevel() != null;
+    }
 
-		this.setSpawnMode(false);
-		for (; this.elapsed < elapsedTime; this.elapsed += 100L) {
-			this.currentWave.doNextSpawns(100, this);
-		}
-		this.setSpawnMode(true);
-	}
+    public boolean isWaveComplete() {
+        return this.waveComplete;
+    }
 
-	public void stop() {
-		this.active = false;
-	}
+    public int getWaveRestTime() {
+        return this.currentWave == null ? 0 : this.currentWave.getWaveBreakTime();
+    }
 
-	public boolean isActive() {
-		return this.active;
-	}
+    public int getSuccessfulSpawnsThisWave() {
+        return this.successfulSpawns;
+    }
 
-	public boolean isReady() {
-		if ((!this.active) && (this.nexus != null)) {
-			if (this.nexus.getWorld() != null) {
-				return true;
-			}
-		}
+    @Override
+    public void sendSpawnAlert(String message) {
+        this.nexus.messageBoundPlayers(message);
+    }
 
-		return false;
-	}
+    @Override
+    public void noSpawnPointNotice() {
+    }
 
-	public boolean isWaveComplete() {
-		return this.waveComplete;
-	}
+    @Override
+    public int getNumberOfPointsInRange(int minAngle, int maxAngle, SpawnType type) {
+        return this.spawnPointContainer.getNumberOfSpawnPoints(type, minAngle, maxAngle);
+    }
 
-	public int getWaveDuration() {
-		return this.currentWave.getWaveTotalTime();
-	}
+    @Override
+    public boolean attemptSpawn(EntityConstruct construct, int minAngle, int maxAngle) {
+        if (!this.spawnMode) {
+            this.successfulSpawns++;
+            return true;
+        }
+        if (!(this.nexus.getLevel() instanceof ServerLevel level)) {
+            return false;
+        }
+        Mob mob = MobBuilder.createMob(construct, level, this.nexus.getBlockPos());
+        if (mob == null) {
+            Invasion.LOGGER.warn("Invalid entity construct {}", construct);
+            return false;
+        }
+        int spawnTries = Math.min(MAX_SPAWN_TRIES, this.getNumberOfPointsInRange(minAngle, maxAngle, SpawnType.HUMANOID));
+        for (int j = 0; j < spawnTries; j++) {
+            SpawnPoint spawnPoint = maxAngle - minAngle >= 360
+                    ? this.spawnPointContainer.getRandomSpawnPoint(SpawnType.HUMANOID)
+                    : this.spawnPointContainer.getRandomSpawnPoint(SpawnType.HUMANOID, minAngle, maxAngle);
+            if (spawnPoint == null) {
+                return false;
+            }
+            BlockPos pos = spawnPoint.pos();
+            mob.snapTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, this.rand.nextFloat() * 360.0F, 0.0F);
+            if (level.isLoaded(pos) && level.noCollision(mob) && !level.containsAnyLiquid(mob.getBoundingBox())) {
+                this.successfulSpawns++;
+                level.addFreshEntity(mob);
+                return true;
+            }
+        }
+        return false;
+    }
 
-	public int getWaveRestTime() {
-		return this.currentWave.getWaveBreakTime();
-	}
+    private void generateSpawnPoints() {
+        Level level = this.nexus.getLevel();
+        if (level == null) {
+            return;
+        }
+        this.spawnPointContainer = new SpawnPointContainer();
+        List<SpawnPoint> spawnPoints = new ArrayList<>();
+        BlockPos center = this.nexus.getBlockPos();
+        int x = center.getX();
+        int y = center.getY();
+        int z = center.getZ();
+        int minY = level.getMinY() + 1;
+        int maxY = level.getMaxY() - 2;
+        for (int vertical = 0; vertical < 128; vertical = vertical > 0 ? -vertical : -vertical + 1) {
+            int py = y + vertical;
+            if (py < minY || py > maxY) {
+                continue;
+            }
+            for (int i = 0; i <= this.spawnRadius * 0.7D + 1.0D; i++) {
+                int j = (int) Math.round(this.spawnRadius * Math.cos(Math.asin((double) i / this.spawnRadius)));
+                this.addValidSpawn(level, spawnPoints, x + i, py, z + j);
+                this.addValidSpawn(level, spawnPoints, x + j, py, z + i);
+                this.addValidSpawn(level, spawnPoints, x + i, py, z - j);
+                this.addValidSpawn(level, spawnPoints, x + j, py, z - i);
+                this.addValidSpawn(level, spawnPoints, x - i, py, z + j);
+                this.addValidSpawn(level, spawnPoints, x - j, py, z + i);
+                this.addValidSpawn(level, spawnPoints, x - i, py, z - j);
+                this.addValidSpawn(level, spawnPoints, x - j, py, z - i);
+            }
+        }
 
-	public int getSuccessfulSpawnsThisWave() {
-		return this.successfulSpawns;
-	}
+        // Prefer points near the nexus' height, as the original did: cull a share of the far-off ones.
+        if (spawnPoints.size() > MIN_SPAWN_POINTS_TO_KEEP) {
+            int amountToRemove = (int) ((spawnPoints.size() - MIN_SPAWN_POINTS_TO_KEEP) * SPAWN_POINT_CULL_RATE);
+            int i = spawnPoints.size() - 1;
+            for (; i >= spawnPoints.size() - amountToRemove; i--) {
+                if (Math.abs(spawnPoints.get(i).pos().getY() - y) < NORMAL_SPAWN_HEIGHT) {
+                    break;
+                }
+            }
+            for (; i >= MIN_SPAWN_POINTS_TO_KEEP_BELOW_HEIGHT_CUTOFF; i--) {
+                SpawnPoint spawnPoint = spawnPoints.get(i);
+                if (spawnPoint.pos().getY() - y <= HEIGHT_CUTOFF) {
+                    this.spawnPointContainer.addSpawnPointXZ(spawnPoint);
+                }
+            }
+            for (; i >= 0; i--) {
+                this.spawnPointContainer.addSpawnPointXZ(spawnPoints.get(i));
+            }
+        } else {
+            spawnPoints.forEach(this.spawnPointContainer::addSpawnPointXZ);
+        }
+        Invasion.LOGGER.debug("Nexus at {}: {} spawn points", center,
+                this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID));
+    }
 
-	public int getTotalDefinedMobsThisWave() {
-		return this.currentWave.getTotalMobAmount();
-	}
-
-	public void askForRespawn(EntityIMLiving entity) {
-		if (this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID) > 10) {
-			SpawnPoint spawnPoint = this.spawnPointContainer.getRandomSpawnPoint(SpawnType.HUMANOID);
-			entity.setLocationAndAngles(spawnPoint.getPos().getX(), spawnPoint.getPos().getY(),
-					spawnPoint.getPos().getZ(), 0.0F, 0.0F);
-		}
-	}
-
-	@Override
-	public void sendSpawnAlert(String message) {
-		if (this.debugMode) {
-			ModLogger.logDebug(message);
-		}
-		mod_invasion.sendMessageToPlayers(this.nexus.getBoundPlayers(), message);
-	}
-
-	@Override
-	public void noSpawnPointNotice() {
-	}
-
-	public void debugMode(boolean isOn) {
-		this.debugMode = isOn;
-	}
-
-	@Override
-	public int getNumberOfPointsInRange(int minAngle, int maxAngle, SpawnType type) {
-		return this.spawnPointContainer.getNumberOfSpawnPoints(type, minAngle, maxAngle);
-	}
-
-	public void setSpawnMode(boolean flag) {
-		this.spawnMode = flag;
-	}
-
-	public void giveSpawnPoints(SpawnPointContainer spawnPointContainer) {
-		this.spawnPointContainer = spawnPointContainer;
-	}
-
-	@Override
-	public boolean attemptSpawn(EntityConstruct mobConstruct, int minAngle, int maxAngle) {
-		if (this.nexus.getWorld() == null) {
-			if (this.spawnMode) {
-				return false;
-			}
-		}
-		EntityIMLiving mob = this.mobBuilder.createMobFromConstruct(mobConstruct, this.nexus.getWorld(), this.nexus);
-		if (mob == null) {
-			ModLogger.logWarn("Invalid entity construct");
-			return false;
-		}
-
-		int spawnTries = this.getNumberOfPointsInRange(minAngle, maxAngle, SpawnType.HUMANOID);
-		if (spawnTries > 20) {
-			spawnTries = 20;
-		}
-		for (int j = 0; j < spawnTries; j++) {
-			SpawnPoint spawnPoint;
-			if (maxAngle - minAngle >= 360)
-				spawnPoint = this.spawnPointContainer.getRandomSpawnPoint(SpawnType.HUMANOID);
-			else {
-				spawnPoint = this.spawnPointContainer.getRandomSpawnPoint(SpawnType.HUMANOID, minAngle, maxAngle);
-			}
-			if (spawnPoint == null) {
-				return false;
-			}
-			if (!this.spawnMode) {
-				this.successfulSpawns += 1;
-				if (this.debugMode) {
-					ModLogger.logDebug("[Spawn] Time: " + this.currentWave.getTimeInWave() / 1000 + "  Type: "
-							+ mob.toString() + "  Coords: " + spawnPoint.getPos().toString() + "  θ"
-							+ spawnPoint.getAngle() + "  Specified: " + minAngle + "," + maxAngle);
-				}
-
-				return true;
-			}
-			// TODO: increasing y coordinate fixes underground spawning, but I should
-			// probably fix this elsewhere.
-			// DarthXenon: Appears to be fixed.
-			mob.setLocationAndAngles(spawnPoint.getPos().getX(), spawnPoint.getPos().getY(), spawnPoint.getPos().getZ(),
-					0.0F, 0.0F);
-			if (mob.getCanSpawnHere()) {
-				this.successfulSpawns += 1;
-				this.nexus.getWorld().spawnEntity(mob);
-				if (this.debugMode) {
-					ModLogger.logDebug("[Spawn] Time: " + this.currentWave.getTimeInWave() / 1000 + "  Type: "
-							+ mob.toString() + "  Coords: " + mob.posX + ", " + mob.posY + ", " + mob.posZ + "  θ"
-							+ spawnPoint.getAngle() + "  Specified: " + minAngle + "," + maxAngle);
-				}
-
-				return true;
-			}
-		}
-		ModLogger.logWarn("Could not find valid spawn for '" + EntityList.getEntityString(mob) + "' after " + spawnTries
-				+ " tries");
-		return false;
-	}
-
-	private void generateSpawnPoints() {
-		if (this.nexus.getWorld() == null)
-			return;
-
-		EntityIMZombie zombie = new EntityIMZombie(this.nexus.getWorld(), this.nexus);
-		List spawnPoints = new ArrayList();
-		int x = this.nexus.getPos().getX();
-		int y = this.nexus.getPos().getY();
-		int z = this.nexus.getPos().getZ();
-		for (int vertical = 0; vertical < 128; vertical = vertical > 0 ? vertical * -1 : vertical * -1 + 1) {
-			if (y + vertical <= 252) {
-				for (int i = 0; i <= this.spawnRadius * 0.7D + 1.0D; i++) {
-					int j = (int) Math.round(this.spawnRadius * Math.cos(Math.asin(i / this.spawnRadius)));
-
-					this.addValidSpawn(zombie, spawnPoints, x + i, y + vertical, z + j);
-					this.addValidSpawn(zombie, spawnPoints, x + j, y + vertical, z + i);
-
-					this.addValidSpawn(zombie, spawnPoints, x + i, y + vertical, z - j);
-					this.addValidSpawn(zombie, spawnPoints, x + j, y + vertical, z - i);
-
-					this.addValidSpawn(zombie, spawnPoints, x - i, y + vertical, z + j);
-					this.addValidSpawn(zombie, spawnPoints, x - j, y + vertical, z + i);
-
-					this.addValidSpawn(zombie, spawnPoints, x - i, y + vertical, z - j);
-					this.addValidSpawn(zombie, spawnPoints, x - j, y + vertical, z - i);
-				}
-
-			}
-
-		}
-
-		if (spawnPoints.size() > 15) {
-			int i;
-			int amountToRemove = (int) ((spawnPoints.size() - 15) * 0.3F);
-			for (i = spawnPoints.size() - 1; i >= spawnPoints.size() - amountToRemove; i--) {
-				if (Math.abs(((SpawnPoint) spawnPoints.get(i)).getPos().getY() - y) < 30) {
-					break;
-				}
-			}
-			for (; i >= 20; i--) {
-				SpawnPoint spawnPoint = (SpawnPoint) spawnPoints.get(i);
-				if (spawnPoint.getPos().getY() - y <= 35) {
-					this.spawnPointContainer.addSpawnPointXZ(spawnPoint);
-				}
-
-			}
-			for (; i >= 0; i--) {
-				this.spawnPointContainer.addSpawnPointXZ((SpawnPoint) spawnPoints.get(i));
-			}
-
-		}
-
-		ModLogger.logDebug("Num. Spawn Points: "
-				+ Integer.toString(this.spawnPointContainer.getNumberOfSpawnPoints(SpawnType.HUMANOID)));
-	}
-
-	private void addValidSpawn(EntityIMLiving entity, List<SpawnPoint> spawnPoints, int x, int y, int z) {
-		entity.setLocationAndAngles(x, y, z, 0.0F, 0.0F);
-		if (entity.getCanSpawnHere()) {
-			int angle = (int) (Math.atan2(this.nexus.getPos().getZ() - z, this.nexus.getPos().getX() - x) * 180.0D
-					/ Math.PI);
-			spawnPoints.add(new SpawnPoint(x, y, z, angle, SpawnType.HUMANOID));
-		}
-	}
-
-	private void checkAddSpawn(EntityIMLiving entity, int x, int y, int z) {
-		entity.setLocationAndAngles(x, y, z, 0.0F, 0.0F);
-		if (entity.getCanSpawnHere()) {
-			int angle = (int) (Math.atan2(this.nexus.getPos().getZ() - z, this.nexus.getPos().getX() - x) * 180.0D
-					/ Math.PI);
-			this.spawnPointContainer.addSpawnPointXZ(new SpawnPoint(x, y, z, angle, SpawnType.HUMANOID));
-		}
-	}
+    private void addValidSpawn(Level level, List<SpawnPoint> spawnPoints, int x, int y, int z) {
+        BlockPos pos = new BlockPos(x, y, z);
+        if (!level.isLoaded(pos) || !level.isLoaded(pos.above())) {
+            return;
+        }
+        BlockPos below = pos.below();
+        if (!level.getBlockState(below).isFaceSturdy(level, below, Direction.UP)) {
+            return;
+        }
+        for (BlockPos p : new BlockPos[] {pos, pos.above()}) {
+            if (!level.getBlockState(p).getCollisionShape(level, p).isEmpty() || !level.getFluidState(p).isEmpty()) {
+                return;
+            }
+        }
+        int angle = (int) (Math.atan2(this.nexus.getBlockPos().getZ() - z, this.nexus.getBlockPos().getX() - x) * 180.0D / Math.PI);
+        spawnPoints.add(new SpawnPoint(pos, angle, SpawnType.HUMANOID));
+    }
 }

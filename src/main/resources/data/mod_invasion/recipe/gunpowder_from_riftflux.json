@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "XXX"
+  ],
+  "key": {
+    "X": "mod_invasion:riftflux"
+  },
+  "result": {
+    "id": "minecraft:gunpowder",
+    "count": 16
+  }
+}

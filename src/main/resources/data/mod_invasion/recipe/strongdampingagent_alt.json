@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "XXX"
+  ],
+  "key": {
+    "X": "mod_invasion:dampingagent"
+  },
+  "result": {
+    "id": "mod_invasion:strongdampingagent",
+    "count": 1
+  }
+}
