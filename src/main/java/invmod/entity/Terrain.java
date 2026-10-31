@@ -34,6 +34,10 @@ public final class Terrain {
         return block.getExplosionResistance() * (1.0F + bonus * 0.1F);
     }
 
+    public static boolean isPassable(Level level, BlockPos pos, BlockState state) {
+        return state.isAir() || state.getCollisionShape(level, pos).isEmpty();
+    }
+
     public static boolean isObstacle(Level level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
         return !state.isAir() && !state.getCollisionShape(level, pos).isEmpty();

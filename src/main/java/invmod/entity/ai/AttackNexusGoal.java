@@ -32,16 +32,29 @@ public class AttackNexusGoal extends Goal {
     }
 
     private boolean inReach() {
-        BlockPos pos = this.invader.getNexusPos();
-        if (pos == null) {
-            return false;
+        BlockPos nexus = this.invader.getNexusPos();
+        return nexus != null && touchesNexus(this.mob, nexus);
+    }
+
+    /**
+     * The original isNexusInRange: the nexus must touch the block box the mob occupies, on a side at any of its
+     * heights, right above its head or right under its feet.
+     */
+    public static boolean touchesNexus(Mob mob, BlockPos nexus) {
+        int sizeX = Math.max(1, (int) (mob.getBbWidth() + 1.0F));
+        int sizeY = Math.max(1, (int) (mob.getBbHeight() + 1.0F));
+        BlockPos feet = BlockPos.containing(mob.getX() - (sizeX - 1) * 0.5, mob.getY() + 0.5, mob.getZ() - (sizeX - 1) * 0.5);
+        int dx = nexus.getX() - feet.getX();
+        int dy = nexus.getY() - feet.getY();
+        int dz = nexus.getZ() - feet.getZ();
+        boolean insideX = dx >= 0 && dx < sizeX;
+        boolean insideZ = dz >= 0 && dz < sizeX;
+        boolean besideX = (dx == -1 || dx == sizeX) && insideZ;
+        boolean besideZ = (dz == -1 || dz == sizeX) && insideX;
+        if ((besideX || besideZ) && dy >= 0 && dy < sizeY) {
+            return true;
         }
-        double reach = 1.5 + this.mob.getBbWidth();
-        Vec3 center = Vec3.atCenterOf(pos);
-        double dx = Math.max(0, Math.abs(center.x - this.mob.getX()) - 0.5);
-        double dz = Math.max(0, Math.abs(center.z - this.mob.getZ()) - 0.5);
-        double dy = center.y - (this.mob.getY() + this.mob.getBbHeight() / 2.0);
-        return dx * dx + dz * dz < reach * reach && Math.abs(dy) < 1.5 + this.mob.getBbHeight() / 2.0;
+        return insideX && insideZ && (dy == -1 || dy == sizeY);
     }
 
     @Override

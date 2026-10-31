@@ -78,6 +78,11 @@ public class IMImp extends Monster implements Invader {
     }
 
     @Override
+    public boolean canClimbWalls() {
+        return true;
+    }
+
+    @Override
     public boolean removeWhenFarAway(double distSqr) {
         return !this.isNexusBound() && super.removeWhenFarAway(distSqr);
     }

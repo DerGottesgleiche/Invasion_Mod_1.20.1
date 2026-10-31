@@ -23,6 +23,7 @@ public final class InvaderGoals {
     public static void addMovementGoals(PathfinderMob mob, double speed) {
         mob.goalSelector.addGoal(0, new FloatGoal(mob));
         mob.goalSelector.addGoal(2, new AttackNexusGoal(mob));
+        mob.goalSelector.addGoal(4, new invmod.entity.ai.FollowEngineerGoal(mob));
         mob.goalSelector.addGoal(5, new GoToNexusGoal(mob, speed));
         mob.goalSelector.addGoal(7, new WaterAvoidingRandomStrollGoal(mob, 0.8) {
             @Override

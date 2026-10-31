@@ -64,6 +64,7 @@ public class NexusBlockEntity extends BaseContainerBlockEntity {
     private NonNullList<ItemStack> items = NonNullList.withSize(2, ItemStack.EMPTY);
     private final IMWaveSpawner waveSpawner;
     private final IMWaveBuilder waveBuilder = new IMWaveBuilder();
+    private final invmod.entity.ai.AttackerAI attackerAI = new invmod.entity.ai.AttackerAI(this);
     private final List<UUID> boundPlayers = new ArrayList<>();
     private List<Mob> mobList = new ArrayList<>();
 
@@ -174,6 +175,7 @@ public class NexusBlockEntity extends BaseContainerBlockEntity {
                     this.bindPlayers();
                     this.updateMobList();
                 }
+                this.attackerAI.tick(this.mobList);
                 if (this.mode == MODE_INVASION || this.mode == MODE_CONTINUOUS_INVASION) {
                     this.doInvasion(TICK_MILLIS);
                 } else {
@@ -438,6 +440,7 @@ public class NexusBlockEntity extends BaseContainerBlockEntity {
             this.setActivated(false);
         }
         this.waveSpawner.stop();
+        this.attackerAI.clear();
         this.activationTimer = 0;
         this.currentWave = 0;
         this.messageBoundPlayers("Invasion ended.");
@@ -658,6 +661,10 @@ public class NexusBlockEntity extends BaseContainerBlockEntity {
         return this.activated;
     }
 
+    public invmod.entity.ai.AttackerAI getAttackerAI() {
+        return this.attackerAI;
+    }
+
     public int getMode() {
         return this.mode;
     }
@@ -768,6 +775,7 @@ public class NexusBlockEntity extends BaseContainerBlockEntity {
         this.continuousAttack = input.getBooleanOr("ContinuousAttack", false);
         this.activated = input.getBooleanOr("Activated", false);
         this.waveSpawner.setRadius(this.spawnRadius);
+        this.attackerAI.load(input);
         if (this.mode == MODE_INVASION || this.mode == MODE_CONTINUOUS_INVASION
                 || (this.mode == MODE_CONTINUOUS && this.continuousAttack)) {
             this.resumedFromNBT = true;
@@ -800,6 +808,7 @@ public class NexusBlockEntity extends BaseContainerBlockEntity {
         output.putBoolean("ContinuousAttack", this.continuousAttack);
         output.putBoolean("Activated", this.activated);
         output.putLong("SpawnerElapsed", this.waveSpawner.getElapsedTime());
+        this.attackerAI.save(output);
     }
 
     public static @Nullable NexusBlockEntity findNearest(Level level, BlockPos origin, int range) {

@@ -22,6 +22,8 @@ import net.minecraft.world.level.storage.ValueOutput;
 public class IMPigEngy extends Monster implements Invader {
     private static final EntityDataAccessor<Integer> DATA_VARIANT = SynchedEntityData.defineId(IMPigEngy.class, EntityDataSerializers.INT);
     private final InvaderData invaderData = new InvaderData(DATA_VARIANT);
+    private float supportThisTick;
+    private int askForScaffoldTimer = 60;
 
     public IMPigEngy(EntityType<? extends Monster> type, Level level) {
         super(type, level);
@@ -64,6 +66,57 @@ public class IMPigEngy extends Monster implements Invader {
     @Override
     public TerrainSkill terrainSkill() {
         return TerrainSkill.BUILD_LADDERS;
+    }
+
+    /** Tier 2 engineers build with cobblestone, tier 1 with planks (original TerrainBuilder setup). */
+    @Override
+    public net.minecraft.world.level.block.state.BlockState buildMaterial() {
+        return this.getTier() >= 2 ? net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState()
+                : net.minecraft.world.level.block.Blocks.OAK_PLANKS.defaultBlockState();
+    }
+
+    @Override
+    public float buildMaterialCost() {
+        return this.getTier() >= 2 ? invmod.entity.terrain.TerrainBuilder.COBBLE_COST : invmod.entity.terrain.TerrainBuilder.PLANKS_COST;
+    }
+
+    @Override
+    public float digSpeed() {
+        return this.getTier() <= 1 ? 1.0F : this.getTier() * 0.75F;
+    }
+
+    /** Invaders waiting near the engineer help it build faster. */
+    public void support(float amount) {
+        this.supportThisTick += amount;
+    }
+
+    @Override
+    protected void customServerAiStep(net.minecraft.server.level.ServerLevel level) {
+        super.customServerAiStep(level);
+        invmod.entity.terrain.TerrainBuilder builder = this.navigator().builder();
+        if (builder != null) {
+            builder.setBuildRate(1.0F + this.supportThisTick * 0.33F);
+        }
+        this.supportThisTick = 0.0F;
+        // Ask the nexus for scaffolds when there is no way up to it (original updateAITick).
+        invmod.block.NexusBlockEntity nexus = this.getNexus();
+        if (nexus != null && --this.askForScaffoldTimer <= 0) {
+            int weight = 1;
+            int dy = nexus.getBlockPos().getY() - this.blockPosition().getY();
+            if (dy > 1) {
+                weight = Math.max(6000 / Math.max(1, nexus.getBlockPos().getY()) - this.blockPosition().getY(), 1);
+            }
+            if (this.navigator().lastPathDistanceToTarget() > 2.0F || this.random.nextInt(weight) == 0) {
+                if (nexus.getAttackerAI().askGenerateScaffolds(this)) {
+                    this.navigator().clearPath();
+                    this.askForScaffoldTimer = 60;
+                } else {
+                    this.askForScaffoldTimer = 140;
+                }
+            } else {
+                this.askForScaffoldTimer = 20;
+            }
+        }
     }
 
     @Override

@@ -103,6 +103,11 @@ public class IMSpider extends Spider implements Invader {
     }
 
     @Override
+    public boolean canClimbWalls() {
+        return true;
+    }
+
+    @Override
     public boolean removeWhenFarAway(double distSqr) {
         return !this.isNexusBound() && super.removeWhenFarAway(distSqr);
     }

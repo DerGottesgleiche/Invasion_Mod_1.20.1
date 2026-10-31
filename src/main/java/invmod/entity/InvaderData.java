@@ -16,6 +16,8 @@ import org.jspecify.annotations.Nullable;
 public class InvaderData {
     private final EntityDataAccessor<Integer> variant;
     private @Nullable BlockPos nexusPos;
+    private invmod.entity.ai.navigator.@Nullable NavigatorIM navigator;
+    private boolean canDig = true;
 
     public InvaderData(EntityDataAccessor<Integer> variant) {
         this.variant = variant;
@@ -43,6 +45,21 @@ public class InvaderData {
 
     public int getTexture(Mob mob) {
         return mob.getEntityData().get(this.variant) >> 8 & 0xFF;
+    }
+
+    public invmod.entity.ai.navigator.NavigatorIM navigator(Mob mob) {
+        if (this.navigator == null) {
+            this.navigator = new invmod.entity.ai.navigator.NavigatorIM(mob);
+        }
+        return this.navigator;
+    }
+
+    public boolean canDig() {
+        return this.canDig;
+    }
+
+    public void setCanDig(boolean canDig) {
+        this.canDig = canDig;
     }
 
     public @Nullable BlockPos getNexusPos() {

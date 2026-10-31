@@ -44,7 +44,7 @@ Waves 1-11 are the original hand-made waves, every wave after that scales up.
 | Skeleton | Shoots players on sight |
 | Spider | Climbs walls. Jumping spiders pounce, mother spiders hatch babies |
 | Creeper | Walks to the Nexus and blows up next to it, or blows open the wall it is stuck at |
-| Pigman Engineer | Builds ladders up walls so the horde can climb them |
+| Pigman Engineer | Builds ladders up walls, ladder towers under overhangs, bridges over gaps and scaffolds up to a high Nexus; also digs |
 | Thrower | Big and slow, throws boulders (tier 1) or lit TNT (tier 2) at players and at the walls in its way |
 | Imp | Small, fast, sets you on fire |
 
@@ -73,9 +73,12 @@ act on the nearest Nexus within 16 blocks.
 This is a rewrite on today's Minecraft, not a line-by-line port. The Nexus, the wave definitions, the spawner,
 the items and the recipes follow the original closely; these parts were changed:
 
-- Invaders use Minecraft's own pathfinding. When the way is blocked they dig (diggers), build ladders
-  (engineers) or keep pushing towards the Nexus. The original's custom pathfinder and its scaffold-building
-  coordinator are not ported.
+- The invader pathfinding follows the original design: an A* search over nodes with actions (walk,
+  climb, swim, dig, ladder, ladder tower, bridge, scaffold). Digging costs the time it takes, so invaders tunnel
+  through the weakest part of a wall; crowded spots cost more, so the horde spreads out. Pigman engineers
+  build ladders, ladder towers under overhangs and bridges, and the Nexus' attacker AI plans scaffolds when
+  there is no other way up. Invaders without a way to the Nexus wait with an engineer and speed up its
+  building. Fighting players still uses Minecraft's own pathfinding.
 - Traps are flat blocks instead of entities.
 - Boulders look like cobblestone; mother spiders hatch babies directly instead of laying egg entities; the
   Nexus zaps leftover mobs with (harmless) lightning instead of its own bolt entity.
@@ -88,9 +91,17 @@ the items and the recipes follow the original closely; these parts were changed:
 ## Status
 
 - Builds against Minecraft 26.3 / NeoForge 26.3.0.99.
-- Six automated game tests pass on a headless server: a wave spawns invaders, invaders spawned 24 blocks away
-  walk in and hit the Nexus, a zombie digs through a cobblestone wall to the Nexus, a pigman engineer builds a
-  ladder, and the data files (recipes, loot tables) load without errors.
+- Eleven automated game tests pass on a headless server. They show that:
+  - a wave spawns invaders;
+  - invaders spawned 24 blocks away walk in and hit the Nexus;
+  - a zombie on open ground walks to the Nexus and hits it;
+  - a zombie digs through a cobblestone wall to the Nexus;
+  - a zombie facing a stone wall with one dirt column tunnels through the dirt and leaves the stone alone;
+  - a pigman engineer builds a ladder, climbs a 3-high wall and hits the Nexus on top;
+  - a zombie that cannot dig climbs the engineer's ladder;
+  - an engineer builds a ladder tower under a platform 4 blocks up;
+  - for a platform 8 blocks up, the attacker AI plans a scaffold and the engineer builds it and reaches the Nexus;
+  - the data files (recipes, loot tables) load without errors.
 - **Not yet checked in a running game client**: models, textures, the Nexus screen and sounds have not been
   looked at on screen. Please report anything that renders wrong.
 

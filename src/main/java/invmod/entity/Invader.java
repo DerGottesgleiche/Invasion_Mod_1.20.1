@@ -66,6 +66,42 @@ public interface Invader {
         return 2;
     }
 
+    /** How many blocks this invader can step or jump up in one move. */
+    default int jumpHeight() {
+        return 1;
+    }
+
+    /** Spiders and imps climb walls. */
+    default boolean canClimbWalls() {
+        return false;
+    }
+
+    default boolean canSwim() {
+        return true;
+    }
+
+    default boolean canDigDown() {
+        return this.terrainSkill() != TerrainSkill.NONE;
+    }
+
+    /** False while a digger is following an engineer (the original stopped it digging then). */
+    default boolean canDigNow() {
+        return this.invaderData().canDig();
+    }
+
+    /** The block engineers build with, and how many ticks one takes. */
+    default net.minecraft.world.level.block.state.BlockState buildMaterial() {
+        return net.minecraft.world.level.block.Blocks.OAK_PLANKS.defaultBlockState();
+    }
+
+    default float buildMaterialCost() {
+        return invmod.entity.terrain.TerrainBuilder.PLANKS_COST;
+    }
+
+    default invmod.entity.ai.navigator.NavigatorIM navigator() {
+        return this.invaderData().navigator(this.asMob());
+    }
+
     default String speciesName() {
         return this.asMob().getType().getDescription().getString();
     }

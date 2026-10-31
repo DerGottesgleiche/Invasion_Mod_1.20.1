@@ -21,6 +21,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
@@ -48,6 +49,11 @@ public final class InvasionGameTests {
         FUNCTIONS.register("engineer_builds_ladder", () -> InvasionGameTests::engineerBuildsLadder);
         FUNCTIONS.register("invaders_reach_nexus", () -> InvasionGameTests::invadersReachNexus);
         FUNCTIONS.register("zombie_walks_to_nexus", () -> InvasionGameTests::zombieWalksToNexus);
+        FUNCTIONS.register("zombie_digs_weakest_spot", () -> InvasionGameTests::zombieDigsWeakestSpot);
+        FUNCTIONS.register("engineer_climbs_to_nexus", () -> InvasionGameTests::engineerClimbsToNexus);
+        FUNCTIONS.register("horde_uses_engineer_ladder", () -> InvasionGameTests::hordeUsesEngineerLadder);
+        FUNCTIONS.register("engineer_tower_under_overhang", () -> InvasionGameTests::engineerTowerUnderOverhang);
+        FUNCTIONS.register("engineer_builds_scaffold", () -> InvasionGameTests::engineerBuildsScaffold);
         FUNCTIONS.register(modBus);
         modBus.addListener(InvasionGameTests::registerTests);
     }
@@ -60,6 +66,11 @@ public final class InvasionGameTests {
         test(event, env, "engineer_builds_ladder", 1200);
         test(event, env, "invaders_reach_nexus", 4000);
         test(event, env, "zombie_walks_to_nexus", 800);
+        test(event, env, "zombie_digs_weakest_spot", 1500);
+        test(event, env, "engineer_climbs_to_nexus", 2400);
+        test(event, env, "horde_uses_engineer_ladder", 3000);
+        test(event, env, "engineer_tower_under_overhang", 4000);
+        test(event, env, "engineer_builds_scaffold", 8000);
     }
 
     private static void test(RegisterGameTestsEvent event, Holder<TestEnvironmentDefinition<?>> env, String name, int maxTicks) {
@@ -111,6 +122,171 @@ public final class InvasionGameTests {
             helper.assertTrue(!boundMobs(helper, nexus).isEmpty(), "no invaders spawned yet");
             Invasion.LOGGER.info("[test] wave 1 spawned {} after {} ticks", boundMobs(helper, nexus), helper.getTick());
         });
+    }
+
+    /**
+     * A wall of stone with one dirt column: the zombie plans its tunnel through the dirt (weakest spot) instead
+     * of digging the stone straight ahead, as the original pathfinder did.
+     */
+    private static void zombieDigsWeakestSpot(GameTestHelper helper) {
+        floor(helper);
+        for (int x = 0; x < 15; x++) {
+            for (int y = 1; y <= 2; y++) {
+                helper.setBlock(x, y, 0, Blocks.BEDROCK);
+                helper.setBlock(x, y, 4, Blocks.BEDROCK);
+            }
+            for (int z = 0; z < 5; z++) {
+                helper.setBlock(x, 3, z, Blocks.BEDROCK);
+            }
+        }
+        for (int z = 1; z <= 3; z++) {
+            for (int y = 1; y <= 2; y++) {
+                helper.setBlock(0, y, z, Blocks.BEDROCK);
+                helper.setBlock(7, y, z, z == 3 ? Blocks.DIRT : Blocks.STONE);
+            }
+        }
+        NexusBlockEntity nexus = placeNexus(helper, new BlockPos(12, 1, 2));
+        IMZombie zombie = helper.spawn(ModEntities.ZOMBIE.get(), new BlockPos(2, 1, 1));
+        zombie.invaderData().setNexusPos(nexus.getBlockPos());
+        zombie.setupInvader(1, 0, 0);
+        helper.succeedWhen(() -> {
+            helper.assertTrue(nexus.getHp() < 100, "the zombie has not hit the nexus yet");
+            for (int z = 1; z <= 2; z++) {
+                for (int y = 1; y <= 2; y++) {
+                    helper.assertBlockPresent(Blocks.STONE, new BlockPos(7, y, z));
+                }
+            }
+            Invasion.LOGGER.info("[test] zombie went through the dirt, stone untouched, after {} ticks", helper.getTick());
+        });
+    }
+
+    /** An engineer below a nexus on top of a 3-high wall builds a ladder, climbs it and hits the nexus. */
+    private static void engineerClimbsToNexus(GameTestHelper helper) {
+        floor(helper);
+        raisedNexusWall(helper);
+        NexusBlockEntity nexus = placeNexus(helper, new BlockPos(9, 4, 2));
+        IMPigEngy engy = helper.spawn(ModEntities.PIG_ENGY.get(), new BlockPos(2, 1, 2));
+        engy.invaderData().setNexusPos(nexus.getBlockPos());
+        engy.setupInvader(1, 0, 0);
+        helper.succeedWhen(() -> {
+            helper.assertTrue(nexus.getHp() < 100, "the engineer has not reached the nexus yet (at " + engy.blockPosition() + ")");
+            Invasion.LOGGER.info("[test] engineer climbed up and hit the nexus after {} ticks", helper.getTick());
+        });
+    }
+
+    /** A zombie that cannot dig gets up the wall on the ladder an engineer builds. */
+    private static void hordeUsesEngineerLadder(GameTestHelper helper) {
+        floor(helper);
+        raisedNexusWall(helper);
+        NexusBlockEntity nexus = placeNexus(helper, new BlockPos(9, 4, 2));
+        IMPigEngy engy = helper.spawn(ModEntities.PIG_ENGY.get(), new BlockPos(2, 1, 2));
+        engy.invaderData().setNexusPos(nexus.getBlockPos());
+        engy.setupInvader(1, 0, 0);
+        IMZombie zombie = helper.spawn(ModEntities.ZOMBIE.get(), new BlockPos(2, 1, 3));
+        zombie.invaderData().setNexusPos(nexus.getBlockPos());
+        zombie.setupInvader(1, 1, 0);
+        helper.succeedWhen(() -> {
+            helper.assertTrue(zombie.getY() >= helper.absolutePos(new BlockPos(0, 4, 0)).getY(),
+                    "the zombie is not on top of the wall yet (at " + zombie.blockPosition() + ")");
+            Invasion.LOGGER.info("[test] non-digging zombie climbed the engineer's ladder after {} ticks", helper.getTick());
+        });
+    }
+
+    /**
+     * A nexus on a platform overhanging 4 blocks up: the engineer builds a ladder tower (pillar plus ladder)
+     * under the overhang and climbs onto it, the original's LADDER_TOWER action.
+     */
+    private static void engineerTowerUnderOverhang(GameTestHelper helper) {
+        floatingNexusOutside(helper, 4, new BlockPos(7, 0, -40));
+    }
+
+    /**
+     * A nexus on a platform 8 blocks up, too high for a ladder tower: the attacker AI plans a scaffold and the
+     * engineer builds it.
+     */
+    private static void engineerBuildsScaffold(GameTestHelper helper) {
+        floatingNexusOutside(helper, 8, new BlockPos(7, 0, -80));
+    }
+
+    /** A 3x3 bedrock platform with the nexus on it, far outside the arena so there are no walls to use. */
+    private static void floatingNexusOutside(GameTestHelper helper, int height, BlockPos rel) {
+        ServerLevelAccess world = new ServerLevelAccess(helper, rel);
+        BlockPos ground = world.ground();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                world.set(ground.offset(dx, height, dz), Blocks.BEDROCK);
+            }
+        }
+        world.set(ground.above(height + 1), ModBlocks.NEXUS.get());
+        NexusBlockEntity nexus = (NexusBlockEntity) helper.getLevel().getBlockEntity(ground.above(height + 1));
+        IMPigEngy engy = ModEntities.PIG_ENGY.get().create(helper.getLevel(), net.minecraft.world.entity.EntitySpawnReason.EVENT);
+        engy.snapTo(ground.getX() - 5.5, ground.getY(), ground.getZ() + 0.5, 0.0F, 0.0F);
+        engy.invaderData().setNexusPos(nexus.getBlockPos());
+        engy.setupInvader(1, 0, 0);
+        helper.getLevel().addFreshEntity(engy);
+        helper.succeedWhen(() -> {
+            helper.assertTrue(nexus.getHp() < 100, "the engineer has not reached the nexus yet (at "
+                    + engy.blockPosition().subtract(ground).toShortString() + ", " + nexus.getAttackerAI().getScaffolds().size()
+                    + " scaffolds)");
+            int ladders = 0;
+            int blocks = 0;
+            for (BlockPos p : BlockPos.betweenClosed(ground.offset(-6, 0, -6), ground.offset(6, height + 2, 6))) {
+                Block b = helper.getLevel().getBlockState(p).getBlock();
+                ladders += b == Blocks.LADDER ? 1 : 0;
+                blocks += b == Blocks.OAK_PLANKS ? 1 : 0;
+            }
+            Invasion.LOGGER.info("[test] engineer reached a platform {} up after {} ticks: {} scaffolds planned, {} ladders and {} planks built",
+                    height, helper.getTick(), nexus.getAttackerAI().getScaffolds().size(), ladders, blocks);
+            world.clear(engy);
+        });
+    }
+
+    /** Builds outside the test arena: finds the natural ground and force-loads the chunks around it. */
+    private record ServerLevelAccess(GameTestHelper helper, BlockPos rel) {
+        BlockPos ground() {
+            BlockPos abs = this.helper.absolutePos(this.rel);
+            int cx = abs.getX() >> 4;
+            int cz = abs.getZ() >> 4;
+            for (int x = cx - 2; x <= cx + 2; x++) {
+                for (int z = cz - 2; z <= cz + 2; z++) {
+                    this.helper.getLevel().setChunkForced(x, z, true);
+                }
+            }
+            while (this.helper.getLevel().getBlockState(abs.below()).isAir() && abs.getY() > this.helper.getLevel().getMinY()) {
+                abs = abs.below();
+            }
+            while (!this.helper.getLevel().getBlockState(abs).isAir()) {
+                abs = abs.above();
+            }
+            return abs;
+        }
+
+        void set(BlockPos abs, Block block) {
+            this.helper.getLevel().setBlockAndUpdate(abs, block.defaultBlockState());
+        }
+
+        void clear(IMPigEngy engy) {
+            BlockPos base = engy.getNexusPos();
+            if (base != null) {
+                for (BlockPos p : BlockPos.betweenClosed(base.offset(-8, -12, -8), base.offset(8, 2, 8))) {
+                    BlockState state = this.helper.getLevel().getBlockState(p);
+                    if (!state.isAir() && p.getY() > base.getY() - 10) {
+                        this.helper.getLevel().setBlockAndUpdate(p, Blocks.AIR.defaultBlockState());
+                    }
+                }
+            }
+            engy.discard();
+        }
+    }
+
+    private static void raisedNexusWall(GameTestHelper helper) {
+        for (int x = 6; x < 15; x++) {
+            for (int z = 0; z < 5; z++) {
+                for (int y = 1; y <= 3; y++) {
+                    helper.setBlock(x, y, z, Blocks.BEDROCK);
+                }
+            }
+        }
     }
 
     /** On open ground a zombie walks straight up to the nexus and hits it. */
