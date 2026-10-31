@@ -15,7 +15,7 @@ Build a Nexus, activate it and survive the waves of invaders that dig, climb and
 [[dependencies.${mod_id}]]
     modId="neoforge"
     type="required"
-    versionRange="[${neo_version},)"
+    versionRange="[26.3,)"
     ordering="NONE"
     side="BOTH"
 
