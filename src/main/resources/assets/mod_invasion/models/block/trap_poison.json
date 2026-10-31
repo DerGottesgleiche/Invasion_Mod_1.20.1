@@ -2,8 +2,8 @@
   "parent": "minecraft:block/block",
   "ambientocclusion": false,
   "textures": {
-    "particle": "mod_invasion:item/poisontrap",
-    "top": "mod_invasion:item/poisontrap"
+    "particle": "mod_invasion:block/trap_poison",
+    "top": "mod_invasion:block/trap_poison"
   },
   "elements": [
     {

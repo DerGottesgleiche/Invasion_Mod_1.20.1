@@ -2,8 +2,8 @@
   "parent": "minecraft:block/block",
   "ambientocclusion": false,
   "textures": {
-    "particle": "mod_invasion:item/emptytrap",
-    "top": "mod_invasion:item/emptytrap"
+    "particle": "mod_invasion:block/trap_empty",
+    "top": "mod_invasion:block/trap_empty"
   },
   "elements": [
     {

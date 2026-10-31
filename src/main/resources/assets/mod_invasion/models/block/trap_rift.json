@@ -2,8 +2,8 @@
   "parent": "minecraft:block/block",
   "ambientocclusion": false,
   "textures": {
-    "particle": "mod_invasion:item/rifttrap",
-    "top": "mod_invasion:item/rifttrap"
+    "particle": "mod_invasion:block/trap_rift",
+    "top": "mod_invasion:block/trap_rift"
   },
   "elements": [
     {

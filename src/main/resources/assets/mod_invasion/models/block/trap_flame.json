@@ -2,8 +2,8 @@
   "parent": "minecraft:block/block",
   "ambientocclusion": false,
   "textures": {
-    "particle": "mod_invasion:item/flametrap",
-    "top": "mod_invasion:item/flametrap"
+    "particle": "mod_invasion:block/trap_flame",
+    "top": "mod_invasion:block/trap_flame"
   },
   "elements": [
     {
