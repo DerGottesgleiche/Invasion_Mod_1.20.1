@@ -65,6 +65,5 @@ public class NexusScreen extends AbstractContainerScreen<NexusMenu> {
             graphics.text(this.font, "Activating...", 13, 62, TEXT, false);
             graphics.text(this.font, "Are you sure?", 8, 72, TEXT, false);
         }
-        graphics.text(this.font, this.playerInventoryTitle, this.inventoryLabelX, this.inventoryLabelY, TEXT, false);
     }
 }
