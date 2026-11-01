@@ -332,15 +332,66 @@ public class NavigatorIM implements TaskListener {
     }
 
     private void moveToward(PathNode node) {
+        if (this.mob.onClimbable() && !this.mob.onGround()) {
+            this.moveOnLadder(node);
+            return;
+        }
         Vec3 target = this.nodeCenter(node);
         if (node.action.isLadder() || node.action.isLadderTower()) {
-            // Push into the wall the ladder hangs on: that is what makes a mob climb.
+            // Lean against the wall the ladder hangs on (that is what makes a mob climb), without leaving the
+            // ladder's column.
             Direction wall = node.action.wallSide();
-            target = target.add(wall.getStepX() * 0.8, 0, wall.getStepZ() * 0.8);
+            double lean = 0.55 - this.mob.getBbWidth() * 0.5;
+            target = target.add(wall.getStepX() * lean, 0, wall.getStepZ() * lean);
         } else if (node.y > Mth.floor(this.mob.getY()) && this.invader.canClimbWalls()) {
             target = target.add(0, 1, 0);
         }
         this.mob.getMoveControl().setWantedPosition(target.x, target.y, target.z, this.speed);
+    }
+
+    /**
+     * Movement while hanging on a ladder. Vanilla move control makes a mob jump whenever it stands inside a
+     * block with a collision box, and a ladder has one; on a ladder that means "climb", so mobs could never
+     * stop or step off sideways and got pinned under overhangs. Here the mob climbs only when the next node
+     * is higher, keeps its height when stepping off, and moves straight at the next node.
+     */
+    private void moveOnLadder(PathNode node) {
+        Vec3 target = this.nodeCenter(node);
+        double dx = target.x - this.mob.getX();
+        double dz = target.z - this.mob.getZ();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        double dy = node.y - this.mob.getY();
+        boolean sideways = horizontal > 0.3;
+        double vx;
+        double vz;
+        double vy;
+        if (dy < -0.5) {
+            // Climb down.
+            vy = -0.15;
+        } else if (dy > -0.2) {
+            // Climb until the feet are a little above the node, so the mob clears the edge it steps onto.
+            vy = 0.2;
+        } else {
+            vy = 0.0;
+        }
+        if (sideways && this.mob.getY() > node.y - 0.3) {
+            double speed = Math.min(0.15, horizontal);
+            vx = dx / horizontal * speed;
+            vz = dz / horizontal * speed;
+        } else {
+            // Stay in the middle of the ladder column we are in while climbing.
+            BlockPos column = this.mob.blockPosition();
+            vx = (column.getX() + 0.5 - this.mob.getX()) * 0.3;
+            vz = (column.getZ() + 0.5 - this.mob.getZ()) * 0.3;
+        }
+        this.mob.getNavigation().stop();
+        this.mob.setZza(0.0F);
+        this.mob.setJumping(false);
+        this.mob.setDeltaMovement(vx, vy, vz);
+        this.mob.getLookControl().setLookAt(target.x, target.y + this.mob.getEyeHeight(), target.z);
+        if (sideways) {
+            this.mob.setYRot((float) (Math.atan2(dz, dx) * 180.0 / Math.PI) - 90.0F);
+        }
     }
 
     private double distanceToActiveNode() {

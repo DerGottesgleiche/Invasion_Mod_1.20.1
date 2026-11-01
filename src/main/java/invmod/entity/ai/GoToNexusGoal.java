@@ -77,13 +77,20 @@ public class GoToNexusGoal extends Goal {
             this.mob.getLookControl().setLookAt(c.x, c.y, c.z, 10.0F, this.mob.getMaxHeadXRot());
         }
         nav.tick();
+        if (nav.noPath() && !nav.isWaitingForTask() && this.mob.onClimbable() && !this.mob.onGround()) {
+            // No way on from this ladder: climb back down and make room (an engineer may need to build here).
+            BlockPos column = this.mob.blockPosition();
+            this.mob.setDeltaMovement((column.getX() + 0.5 - this.mob.getX()) * 0.3, -0.15,
+                    (column.getZ() + 0.5 - this.mob.getZ()) * 0.3);
+            return;
+        }
         if (nav.noPath() && this.distanceToNexus() < 3.0) {
             // Last step: walk up against the nearest face of the nexus.
             Vec3 side = this.nearestSide(nexus);
             this.mob.getMoveControl().setWantedPosition(side.x, side.y, side.z, this.speed);
             return;
         }
-        if (this.failedCount > 1 && nav.noPath()) {
+        if (this.failedCount > 1 && nav.noPath() && this.mob.onGround()) {
             this.mob.getMoveControl().setWantedPosition(nexus.getX() + 0.5, nexus.getY(), nexus.getZ() + 0.5, this.speed);
         }
         if (!nav.isWaitingForTask() && (nav.noPath() || nav.stuckTime() > 40)) {

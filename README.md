@@ -91,7 +91,7 @@ the items and the recipes follow the original closely; these parts were changed:
 ## Status
 
 - Builds against Minecraft 26.3 / NeoForge 26.3.0.99.
-- Eleven automated game tests pass on a headless server. They show that:
+- Twelve automated game tests pass on a headless server. They show that:
   - a wave spawns invaders;
   - invaders spawned 24 blocks away walk in and hit the Nexus;
   - a zombie on open ground walks to the Nexus and hits it;
@@ -101,6 +101,8 @@ the items and the recipes follow the original closely; these parts were changed:
   - a zombie that cannot dig climbs the engineer's ladder;
   - an engineer builds a ladder tower under a platform 4 blocks up;
   - for a platform 8 blocks up, the attacker AI plans a scaffold and the engineer builds it and reaches the Nexus;
+  - on a tower whose top overhangs (the situation from a real game), the engineer bridges and builds a ladder
+    tower around the overhang and both it and a zombie reach the Nexus;
   - the data files (recipes, loot tables) load without errors.
 - **Not yet checked in a running game client**: models, textures, the Nexus screen and sounds have not been
   looked at on screen. Please report anything that renders wrong.

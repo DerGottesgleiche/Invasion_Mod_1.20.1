@@ -31,6 +31,7 @@ public class TerrainModifier {
     private int elapsed;
     private int scrapeTimer;
     private boolean outOfRange;
+    private int blockedRetries;
     private boolean failed;
 
     public TerrainModifier(Mob mob, float reach) {
@@ -90,6 +91,20 @@ public class TerrainModifier {
             }
         }
         if (this.elapsed >= this.timer) {
+            if (entry.newState() != null && entry.newState().isSuffocating(this.mob.level(), entry.pos())
+                    && this.isOccupied(entry.pos())) {
+                // Never build into someone: that suffocates them. Wait a little, then give up and let the
+                // navigator plan again.
+                if (++this.blockedRetries > 10) {
+                    this.failed = true;
+                    this.blockedRetries = 0;
+                    this.next();
+                } else {
+                    this.elapsed = this.timer - 10;
+                }
+                return;
+            }
+            this.blockedRetries = 0;
             this.apply(entry);
             this.next();
         }
@@ -111,6 +126,12 @@ public class TerrainModifier {
         this.clearCrack();
         this.index++;
         this.startEntry();
+    }
+
+    /** Someone really stands in the block (a slight overlap just gets pushed out, so it does not count). */
+    private boolean isOccupied(BlockPos pos) {
+        return !this.mob.level().getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class,
+                new net.minecraft.world.phys.AABB(pos).deflate(0.3), e -> e.isAlive() && !e.isSpectator()).isEmpty();
     }
 
     private boolean isDone(ModifyBlockEntry entry) {

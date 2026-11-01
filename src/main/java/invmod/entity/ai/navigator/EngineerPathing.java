@@ -16,6 +16,11 @@ public class EngineerPathing extends MobPathing {
         super(mob);
     }
 
+    /** A tower block can go here: it is already a full block, or empty space (not a ladder or other fixture). */
+    protected boolean canBuildTowerSide(TerrainView terrain, BlockPos pos) {
+        return this.isFullBlock(terrain, pos) || terrain.state(pos).canBeReplaced();
+    }
+
     protected boolean isFullBlock(TerrainView terrain, BlockPos pos) {
         BlockState state = terrain.state(pos);
         return state.isCollisionShapeFullBlock(terrain.level(), pos);
@@ -85,7 +90,8 @@ public class EngineerPathing extends MobPathing {
             }
             for (int i = 0; i < 4; i++) {
                 Direction dir = PathAction.SIDES[i];
-                if (this.isFullBlock(terrain, above.relative(dir))) {
+                if (this.isFullBlock(terrain, above.relative(dir)) || !this.canBuildTowerSide(terrain, pos.relative(dir))
+                        || !this.canBuildTowerSide(terrain, above.relative(dir))) {
                     continue;
                 }
                 for (int h = 1; h < maxHeight + 1; h++) {

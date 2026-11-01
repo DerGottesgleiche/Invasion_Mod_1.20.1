@@ -86,6 +86,11 @@ public class TerrainBuilder {
         List<ModifyBlockEntry> list = new ArrayList<>();
         BlockState ladder = ladder(wall);
         BlockPos below = pos.below();
+        for (BlockPos side : new BlockPos[] {below.relative(wall), pos.relative(wall)}) {
+            if (!this.isFull(level, side) && !level.getBlockState(side).canBeReplaced()) {
+                return false;
+            }
+        }
         if (!this.isFull(level, below.relative(wall))) {
             list.add(new ModifyBlockEntry(below.relative(wall), this.material, this.cost(this.blockCost)));
         }

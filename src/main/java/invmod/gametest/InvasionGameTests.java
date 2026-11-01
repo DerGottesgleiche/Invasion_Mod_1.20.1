@@ -54,6 +54,7 @@ public final class InvasionGameTests {
         FUNCTIONS.register("horde_uses_engineer_ladder", () -> InvasionGameTests::hordeUsesEngineerLadder);
         FUNCTIONS.register("engineer_tower_under_overhang", () -> InvasionGameTests::engineerTowerUnderOverhang);
         FUNCTIONS.register("engineer_builds_scaffold", () -> InvasionGameTests::engineerBuildsScaffold);
+        FUNCTIONS.register("tower_with_overhang", () -> InvasionGameTests::towerWithOverhang);
         FUNCTIONS.register(modBus);
         modBus.addListener(InvasionGameTests::registerTests);
     }
@@ -71,6 +72,7 @@ public final class InvasionGameTests {
         test(event, env, "horde_uses_engineer_ladder", 3000);
         test(event, env, "engineer_tower_under_overhang", 4000);
         test(event, env, "engineer_builds_scaffold", 8000);
+        test(event, env, "tower_with_overhang", 6000);
     }
 
     private static void test(RegisterGameTestsEvent event, Holder<TestEnvironmentDefinition<?>> env, String name, int maxTicks) {
@@ -197,7 +199,7 @@ public final class InvasionGameTests {
      * under the overhang and climbs onto it, the original's LADDER_TOWER action.
      */
     private static void engineerTowerUnderOverhang(GameTestHelper helper) {
-        floatingNexusOutside(helper, 4, new BlockPos(7, 0, -40));
+        floatingNexusOutside(helper, 4, new BlockPos(-300, 0, -300));
     }
 
     /**
@@ -205,7 +207,48 @@ public final class InvasionGameTests {
      * engineer builds it.
      */
     private static void engineerBuildsScaffold(GameTestHelper helper) {
-        floatingNexusOutside(helper, 8, new BlockPos(7, 0, -80));
+        floatingNexusOutside(helper, 8, new BlockPos(-300, 0, -400));
+    }
+
+    /**
+     * The situation from the owner's game: a sandstone tower whose top layer overhangs by one block, with the
+     * nexus on top. Engineer and zombies start at the foot.
+     */
+    private static void towerWithOverhang(GameTestHelper helper) {
+        ServerLevelAccess world = new ServerLevelAccess(helper, new BlockPos(-300, 0, -500));
+        BlockPos ground = world.ground();
+        int height = 7;
+        for (int y = 0; y < height; y++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    world.set(ground.offset(dx, y, dz), Blocks.SANDSTONE);
+                }
+            }
+        }
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                world.set(ground.offset(dx, height, dz), Blocks.SANDSTONE);
+            }
+        }
+        world.set(ground.above(height + 1), ModBlocks.NEXUS.get());
+        NexusBlockEntity nexus = (NexusBlockEntity) helper.getLevel().getBlockEntity(ground.above(height + 1));
+        IMPigEngy engy = ModEntities.PIG_ENGY.get().create(helper.getLevel(), net.minecraft.world.entity.EntitySpawnReason.EVENT);
+        engy.snapTo(ground.getX() - 5.5, ground.getY(), ground.getZ() + 0.5, 0.0F, 0.0F);
+        engy.invaderData().setNexusPos(nexus.getBlockPos());
+        engy.setupInvader(1, 0, 0);
+        helper.getLevel().addFreshEntity(engy);
+        IMZombie zombie = ModEntities.ZOMBIE.get().create(helper.getLevel(), net.minecraft.world.entity.EntitySpawnReason.EVENT);
+        zombie.snapTo(ground.getX() - 6.5, ground.getY(), ground.getZ() + 1.5, 0.0F, 0.0F);
+        zombie.invaderData().setNexusPos(nexus.getBlockPos());
+        zombie.setupInvader(1, 1, 0);
+        helper.getLevel().addFreshEntity(zombie);
+        helper.succeedWhen(() -> {
+            helper.assertTrue(nexus.getHp() < 100, "nobody has reached the nexus on the tower yet");
+            helper.assertTrue(zombie.getY() > ground.getY() + height, "the zombie is not on top yet");
+            Invasion.LOGGER.info("[test] engineer and zombie got past the overhang after {} ticks", helper.getTick());
+            world.clear(engy);
+            zombie.discard();
+        });
     }
 
     /** A 3x3 bedrock platform with the nexus on it, far outside the arena so there are no walls to use. */
