@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "#X#"
+  ],
+  "key": {
+    "X": "mod_invasion:riftflux",
+    "#": "minecraft:lapis_lazuli"
+  },
+  "result": {
+    "id": "mod_invasion:dampingagent",
+    "count": 1
+  }
+}

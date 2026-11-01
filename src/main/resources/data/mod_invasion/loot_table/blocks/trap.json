@@ -1,0 +1,60 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:alternatives",
+          "children": [
+            {
+              "type": "minecraft:item",
+              "name": "mod_invasion:emptytrap",
+              "condition": {
+                "type": "minecraft:match_block",
+                "blocks": "mod_invasion:trap",
+                "state": {
+                  "type": "empty"
+                }
+              }
+            },
+            {
+              "type": "minecraft:item",
+              "name": "mod_invasion:rifttrap",
+              "condition": {
+                "type": "minecraft:match_block",
+                "blocks": "mod_invasion:trap",
+                "state": {
+                  "type": "rift"
+                }
+              }
+            },
+            {
+              "type": "minecraft:item",
+              "name": "mod_invasion:flametrap",
+              "condition": {
+                "type": "minecraft:match_block",
+                "blocks": "mod_invasion:trap",
+                "state": {
+                  "type": "flame"
+                }
+              }
+            },
+            {
+              "type": "minecraft:item",
+              "name": "mod_invasion:poisontrap",
+              "condition": {
+                "type": "minecraft:match_block",
+                "blocks": "mod_invasion:trap",
+                "state": {
+                  "type": "poison"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "random_sequence": "mod_invasion:blocks/trap"
+}

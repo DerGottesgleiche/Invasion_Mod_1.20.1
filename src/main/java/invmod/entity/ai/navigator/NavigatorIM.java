@@ -1,903 +1,433 @@
 package invmod.entity.ai.navigator;
 
-import invmod.INotifyTask;
-import invmod.entity.EntityIMLiving;
-import invmod.entity.INavigation;
-import invmod.entity.IPathSource;
-import invmod.tileentity.TileEntityNexus;
-import invmod.util.Distance;
-import net.minecraft.block.Block;
-import net.minecraft.block.material.Material;
-import net.minecraft.block.state.IBlockState;
-import net.minecraft.entity.Entity;
-import net.minecraft.init.Blocks;
-import net.minecraft.util.math.AxisAlignedBB;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.ChunkCache;
-import net.minecraft.world.IBlockAccess;
-
-public class NavigatorIM implements INotifyTask, INavigation {
-
-	protected static final int XZPATH_HORIZONTAL_SEARCH = 1;
-	protected static final double ENTITY_TRACKING_TOLERANCE = 0.1D;
-	protected static final double MINIMUM_PROGRESS = 0.01D;
-	protected final EntityIMLiving theEntity;
-	protected IPathSource pathSource;
-	protected Path path;
-	protected PathNode activeNode;
-	protected Vec3d entityCentre;
-	protected Entity pathEndEntity;
-	protected Vec3d pathEndEntityLastPos;
-	protected float moveSpeed;
-	protected float pathSearchLimit;
-	protected boolean noSunPathfind;
-	protected int totalTicks;
-	protected Vec3d lastPos;
-	private Vec3d holdingPos;
-	protected boolean nodeActionFinished;
-	private boolean canSwim;
-	protected boolean waitingForNotify;
-	protected boolean actionCleared;
-	protected double lastDistance;
-	protected int ticksStuck;
-	private boolean maintainPosOnWait;
-	private int lastActionResult;
-	private boolean haltMovement;
-	private boolean autoPathToEntity;
-
-	public NavigatorIM(EntityIMLiving entity, IPathSource pathSource) {
-		this.theEntity = entity;
-		this.pathSource = pathSource;
-		this.noSunPathfind = false;
-		this.lastPos = new Vec3d(0.0D, 0.0D, 0.0D);
-		this.pathEndEntityLastPos = new Vec3d(0.0D, 0.0D, 0.0D);
-		this.lastDistance = 0.0D;
-		this.ticksStuck = 0;
-		this.canSwim = false;
-		this.waitingForNotify = false;
-		this.actionCleared = true;
-		this.nodeActionFinished = true;
-		this.maintainPosOnWait = false;
-		this.haltMovement = false;
-		this.lastActionResult = 0;
-		this.autoPathToEntity = false;
-	}
-
-	@Override
-	public PathAction getCurrentWorkingAction() {
-		if ((!this.nodeActionFinished) && (!this.noPath())) {
-			return this.activeNode.action;
-		}
-		return PathAction.NONE;
-	}
-
-	protected boolean isMaintainingPos() {
-		return this.maintainPosOnWait;
-	}
-
-	protected void setNoMaintainPos() {
-		this.maintainPosOnWait = false;
-	}
-
-	protected void setMaintainPosOnWait(Vec3d pos) {
-		this.holdingPos = pos;
-		this.maintainPosOnWait = true;
-	}
-
-	@Override
-	public void setSpeed(float par1) {
-		this.moveSpeed = par1;
-	}
-
-	public boolean isAutoPathingToEntity() {
-		return this.autoPathToEntity;
-	}
-
-	@Override
-	public Entity getTargetEntity() {
-		return this.pathEndEntity;
-	}
-
-	@Override
-	public Path getPathToXYZ(double x, double y, double z, float targetRadius) {
-		if (!this.canNavigate())
-			return null;
-		// return this.createPath(this.theEntity, MathHelper.floor(x), (int) y,
-		// MathHelper.floor(z), targetRadius);
-		return this.createPath(this.theEntity, new Vec3d(x, y, z), targetRadius);
-	}
-
-	@Override
-	public boolean tryMoveToXYZ(double x, double y, double z, float targetRadius, float speed) {
-		this.ticksStuck = 0;
-		Path newPath = this.getPathToXYZ(MathHelper.floor(x), (int) y, MathHelper.floor(z), targetRadius);
-		if (newPath != null) {
-			return this.setPath(newPath, speed);
-		}
-		return false;
-	}
-
-	@Override
-	public Path getPathTowardsXZ(double x, double z, int min, int max, int verticalRange) {
-		if (this.canNavigate()) {
-			Vec3d target = this.findValidPointNear(x, z, min, max, verticalRange);
-			if (target != null) {
-				Path entityPath = this.getPathToXYZ(target.x, target.y, target.z, 0.0F);
-				if (entityPath != null)
-					return entityPath;
-			}
-		}
-		return null;
-	}
-
-	@Override
-	public boolean tryMoveTowardsXZ(double x, double z, int min, int max, int verticalRange, float speed) {
-		this.ticksStuck = 0;
-		Path newPath = this.getPathTowardsXZ(MathHelper.floor(x), MathHelper.floor(z), min, max, verticalRange);
-		if (newPath != null) {
-			return this.setPath(newPath, speed);
-		}
-		return false;
-	}
-
-	@Override
-	public Path getPathToEntity(Entity targetEntity, float targetRadius) {
-		if (!this.canNavigate())
-			return null;
-		// return createPath(this.theEntity, MathHelper.floor(targetEntity.posX),
-		// MathHelper.floor(targetEntity.getEntityBoundingBox().minY),
-		// MathHelper.floor(targetEntity.posZ), targetRadius);
-		return this.createPath(this.theEntity, targetEntity, targetRadius);
-	}
-
-	@Override
-	public boolean tryMoveToEntity(Entity targetEntity, float targetRadius, float speed) {
-		Path newPath = this.getPathToEntity(targetEntity, targetRadius);
-		if (newPath != null) {
-			if (this.setPath(newPath, speed)) {
-				this.pathEndEntity = targetEntity;
-				return true;
-			}
-
-			this.pathEndEntity = null;
-			return false;
-		}
-
-		return false;
-	}
-
-	@Override
-	public void autoPathToEntity(Entity target) {
-		this.autoPathToEntity = true;
-		this.pathEndEntity = target;
-	}
-
-	@Override
-	public boolean setPath(Path newPath, float speed) {
-		if (newPath == null) {
-			this.path = null;
-			this.theEntity.onPathSet();
-			return false;
-		}
-
-		this.moveSpeed = speed;
-		this.lastDistance = this.getDistanceToActiveNode();
-		this.ticksStuck = 0;
-		this.resetStatus();
-
-		BlockPos size = this.theEntity.getCollideSize();
-		this.entityCentre = new Vec3d(size.getX() * 0.5D, 0.0D, size.getZ() * 0.5D);
-
-		this.path = newPath;
-		this.activeNode = this.path.getPathPointFromIndex(this.path.getCurrentPathIndex());
-
-		if (this.activeNode.action != PathAction.NONE) {
-			this.nodeActionFinished = false;
-		} else if ((size.getX() <= 1) && (size.getZ() <= 1)) {
-			this.path.incrementPathIndex();
-			if (!this.path.isFinished()) {
-				this.activeNode = this.path.getPathPointFromIndex(this.path.getCurrentPathIndex());
-				// ModLogger.logInfo("(Set) Moving " + this.theEntity.getName() + " from " +
-				// this.theEntity.getPosition() + " to " + this.activeNode.toString());
-				// this.theEntity.setVelocity(this.activeNode.xCoord, this.activeNode.yCoord,
-				// this.activeNode.zCoord);
-				if (this.activeNode.action != PathAction.NONE) {
-					this.nodeActionFinished = false;
-				}
-			}
-		} else {
-			// UnstoppableN Custom Code
-			// changed < to > this seems to have fixed some stuffs, not sure why
-			while (this.theEntity.getDistanceSq(this.activeNode.pos.x + this.entityCentre.x,
-					this.activeNode.pos.y + this.entityCentre.y,
-					this.activeNode.pos.z + this.entityCentre.z) > this.theEntity.width) {
-				this.path.incrementPathIndex();
-				if (!this.path.isFinished()) {
-					this.activeNode = this.path.getPathPointFromIndex(this.path.getCurrentPathIndex());
-					// ModLogger.logInfo("(UnstoppableN) Moving " + this.theEntity.getName() + " to
-					// " + this.activeNode.toString());
-					// this.theEntity.setVelocity(this.activeNode.xCoord, this.activeNode.yCoord,
-					// this.activeNode.zCoord);
-					if (this.activeNode.action != PathAction.NONE) {
-						this.nodeActionFinished = false;
-					}
-				} else {
-					// this is the part where it gets cheaty!
-					// System.out.println("Finished! : "+this.path.getCurrentPathIndex()+" /
-					// "+this.path.points.length);
-					// NEVER USE BREAKS! unless you are retarded like me and don't know how to
-					// convert a float width to double getDistance
-					break;
-				}
-
-			}
-
-		}
-
-		if (this.noSunPathfind)
-			this.removeSunnyPath();
-
-		this.theEntity.onPathSet();
-		return true;
-	}
-
-	@Override
-	public Path getPath() {
-		return this.path;
-	}
-
-	@Override
-	public boolean isWaitingForTask() {
-		return this.waitingForNotify;
-	}
-
-	@Override
-	public void onUpdateNavigation() {
-		this.totalTicks += 1;
-		if (this.autoPathToEntity) {
-			this.updateAutoPathToEntity();
-		}
-
-		if (this.noPath()) {
-			this.noPathFollow();
-			return;
-		}
-
-		if (this.waitingForNotify) {
-			if (this.isMaintainingPos()) {
-				this.theEntity.getMoveHelper().setMoveTo(this.holdingPos.x, this.holdingPos.y, this.holdingPos.z,
-						this.moveSpeed);
-			}
-			return;
-		}
-
-		if ((this.canNavigate()) && (this.nodeActionFinished)) {
-			double distance = this.getDistanceToActiveNode();
-			if (this.lastDistance - distance > 0.01D) {
-				this.lastDistance = distance;
-				this.ticksStuck -= 1;
-			} else {
-				this.ticksStuck += 1;
-			}
-
-			int pathIndex = this.path.getCurrentPathIndex();
-			this.pathFollow();
-			this.doMoveAlongPath();
-			if (this.noPath())
-				return;
-
-			// If the entity reached the path point and it has now changed to the next one
-			if (this.path.getCurrentPathIndex() != pathIndex) {
-				this.lastDistance = this.getDistanceToActiveNode();
-				this.ticksStuck = 0;
-				this.activeNode = this.path.getPathPointFromIndex(this.path.getCurrentPathIndex());
-				if (this.activeNode.action != PathAction.NONE) {
-					this.nodeActionFinished = false;
-				}
-			}
-		}
-
-		if (this.nodeActionFinished) {
-			if (!this.isPositionClearFrom(this.theEntity.getPosition(), new BlockPos(this.activeNode.pos),
-					this.theEntity)) {
-				if (this.theEntity.onPathBlocked(this.path, this)) {
-					this.setDoingTaskAndHoldOnPoint();
-				}
-
-			}
-
-			if (!this.haltMovement) {
-				if ((this.pathEndEntity != null) && (this.pathEndEntity.posY - this.theEntity.posY <= 0.0D)
-						&& (this.theEntity.getDistanceSq(this.pathEndEntity.posX,
-								this.pathEndEntity.getEntityBoundingBox().minY, this.pathEndEntity.posZ) < 4.5D))
-					this.theEntity.getMoveHelper().setMoveTo(this.pathEndEntity.posX,
-							this.pathEndEntity.getEntityBoundingBox().minY, this.pathEndEntity.posZ, this.moveSpeed);
-				else {
-					this.theEntity.getMoveHelper().setMoveTo(this.activeNode.pos.x + this.entityCentre.x,
-							this.activeNode.pos.y + this.entityCentre.y, this.activeNode.pos.z + this.entityCentre.z,
-							this.moveSpeed);
-				}
-			} else {
-				this.haltMovement = false;
-			}
-
-		} else if (!this.handlePathAction()) {
-			this.clearPath();
-		}
-	}
-
-	// DarthXenon
-	protected void doMoveAlongPath() {
-		// Copied from net.minecraft.pathfinding.PathNavigate
-		if (!this.noPath()) {
-			if (this.path != null && this.path.getCurrentPathIndex() < this.path.getCurrentPathLength()) {
-
-				// If entity is at the target path point, set the target path point to the next
-				// one on the path.
-				Vec3d vec0 = this.getEntityPosition();
-				Vec3d vec1 = this.path.getPositionAtIndex(this.theEntity, this.path.getCurrentPathIndex());
-				if (vec0.y > vec1.y && this.theEntity.onGround && MathHelper.floor(vec0.x) == MathHelper.floor(vec1.x)
-						&& MathHelper.floor(vec0.z) == MathHelper.floor(vec1.z)) {
-					this.path.incrementPathIndex();
-					// this.activeNode = this.path.points[this.path.getCurrentPathIndex()];
-				}
-
-				// If the entity is not at the end of the path, move along it.
-				if (!this.noPath()) {
-					Vec3d vec2 = this.path.getPositionAtIndex(this.theEntity, this.path.getCurrentPathIndex());
-					if (vec2 != null) {
-						BlockPos pos = (new BlockPos(vec2)).down();
-						AxisAlignedBB axisalignedbb = this.theEntity.world.getBlockState(pos)
-								.getBoundingBox(this.theEntity.world, pos);
-						vec2 = vec2.subtract(0.0D, 1.0D - axisalignedbb.maxY, 0.0D);
-						this.theEntity.getMoveHelper().setMoveTo(vec2.x, vec2.y, vec2.z, this.moveSpeed);
-					}
-				}
-
-				// Old code
-				/*
-				 * ModLogger.logInfo("Moving " + this.theEntity.getName() + " from " +
-				 * this.theEntity.getPosition() + " to " + this.activeNode.getPos());
-				 * this.theEntity.setVelocity(this.activeNode.xCoord - this.theEntity.posX,
-				 * 0/*this.activeNode.yCoord - this.theEntity.posY
-				 */// , this.activeNode.zCoord - this.theEntity.posZ);
-				/*
-				 * this.path.setCurrentPathIndex(this.path.getCurrentPathIndex()+1);
-				 * if(!this.path.isFinished()){ this.activeNode =
-				 * this.path.points[this.path.getCurrentPathIndex()]; } else { this.path = null;
-				 * }
-				 */
-			}
-		}
-	}
-
-	@Override
-	public void notifyTask(int result) {
-		this.waitingForNotify = false;
-		this.lastActionResult = result;
-	}
-
-	@Override
-	public int getLastActionResult() {
-		return this.lastActionResult;
-	}
-
-	@Override
-	public boolean noPath() {
-		return (this.path == null) || (this.path.isFinished());
-	}
-
-	@Override
-	public int getStuckTime() {
-		return this.ticksStuck;
-	}
-
-	@Override
-	public float getLastPathDistanceToTarget() {
-		if (this.noPath()) {
-			if ((this.path != null) && (this.path.getIntendedTarget() != null)) {
-				PathNode node = this.path.getIntendedTarget();
-				return (float) this.theEntity.getDistance(node.pos.x, node.pos.y, node.pos.z);
-			}
-			return 0.0F;
-		}
-
-		return this.path.getFinalPathPoint().distanceTo(this.path.getIntendedTarget());
-	}
-
-	@Override
-	public void clearPath() {
-		this.path = null;
-		this.autoPathToEntity = false;
-		this.resetStatus();
-	}
-
-	@Override
-	public void haltForTick() {
-		this.haltMovement = true;
-	}
-
-	@Override
-	public String getStatus() {
-		String s = "";
-		if (this.autoPathToEntity)
-			s += "Auto:";
-		if (this.noPath()) {
-			s += "NoPath:";
-			return s;
-		}
-		s += "Pathing:";
-		s += "Node[" + this.path.getCurrentPathIndex() + "/" + this.path.getCurrentPathLength() + "]:";
-		if ((!this.nodeActionFinished) && (this.activeNode != null)) {
-			s += "Action[" + this.activeNode.action + "]:";
-		}
-		return s;
-	}
-
-	protected Path createPath(EntityIMLiving entity, Entity target, float targetRadius) {
-		// return createPath(entity, MathHelper.floor(target.posX), (int) target.posY,
-		// MathHelper.floor(target.posZ), targetRadius);
-		return this.createPath(entity, new Vec3d(target.posX, target.posY, target.posZ), targetRadius);
-	}
-
-	/*
-	 * protected Path createPath(EntityIMLiving entity, int x, int y, int z, float
-	 * targetRadius) { return this.createPath(entity, new BlockPos(x, y, z),
-	 * targetRadius); }
-	 */
-
-	protected Path createPath(EntityIMLiving entity, Vec3d vec, float targetRadius) {
-		this.theEntity.setCurrentTargetPos(new BlockPos(vec));
-		// IBlockAccess terrainCache = this.getChunkCache(entity.getPosition(), pos,
-		// 16.0F);
-		IBlockAccess terrainCache = entity.world != null ? entity.world
-				: this.getChunkCache(entity.getPosition(), new BlockPos(vec), 16.0F);
-		TileEntityNexus nexus = entity.getNexus();
-		if (nexus != null)
-			terrainCache = nexus.getAttackerAI().wrapEntityData(terrainCache);
-		float maxSearchRange = 12.0F + (float) Distance.distanceBetween(entity.getPosition(), vec);
-		if (this.pathSource.canPathfindNice(IPathSource.PathPriority.HIGH, maxSearchRange,
-				this.pathSource.getSearchDepth(), this.pathSource.getQuickFailDepth())) {
-			return this.pathSource.createPath(entity, vec, targetRadius, maxSearchRange, terrainCache);
-		}
-		return null;
-	}
-
-	protected void pathFollow() {
-		Vec3d vec3d = this.getEntityPosition();
-		int maxNextLegIndex = this.path.getCurrentPathIndex() - 1;
-
-		PathNode nextPoint = this.path.getPathPointFromIndex(this.path.getCurrentPathIndex());
-		if ((nextPoint.pos.y == vec3d.y) && (maxNextLegIndex < this.path.getCurrentPathLength() - 1)) {
-			maxNextLegIndex++;
-
-			boolean canConsolidate = true;
-			int prevIndex = maxNextLegIndex - 2;
-			if ((prevIndex >= 0) && (this.path.getPathPointFromIndex(prevIndex).action != PathAction.NONE)) {
-				canConsolidate = false;
-			}
-			if ((canConsolidate) && (this.theEntity.canStandAt(this.theEntity.world, this.theEntity.getPosition()))) {// MathHelper.floor(this.theEntity.posX),
-																														// MathHelper.floor(this.theEntity.posY),
-																														// MathHelper.floor(this.theEntity.posZ))))
-																														// {
-				while ((maxNextLegIndex < this.path.getCurrentPathLength() - 1)
-						&& (this.path.getPathPointFromIndex(maxNextLegIndex).pos.y == vec3d.y)
-						&& (this.path.getPathPointFromIndex(maxNextLegIndex).action == PathAction.NONE)) {
-					maxNextLegIndex++;
-				}
-			}
-
-		}
-
-		float fa = this.theEntity.width * 0.5F;
-		fa *= fa;
-		for (int j = this.path.getCurrentPathIndex(); j <= maxNextLegIndex; j++) {
-			if (vec3d.squareDistanceTo(this.path.getPositionAtIndex(this.theEntity, j)) < fa) {
-				this.path.setCurrentPathIndex(j + 1);
-			}
-		}
-
-		int xSize = (int) Math.ceil(this.theEntity.width);
-		int ySize = (int) this.theEntity.height + 1;
-		int zSize = xSize;
-		int index = maxNextLegIndex;
-
-		while (index > this.path.getCurrentPathIndex()) {
-			if (this.isDirectPathBetweenPoints(vec3d, this.path.getPositionAtIndex(this.theEntity, index), xSize, ySize,
-					zSize)) {
-				break;
-			}
-			index--;
-		}
-
-		for (int i = this.path.getCurrentPathIndex() + 1; i < index; i++) {
-			if (this.path.getPathPointFromIndex(i).action != PathAction.NONE) {
-				index = i;
-				break;
-			}
-
-		}
-
-		if (this.path.getCurrentPathIndex() < index)
-			this.path.setCurrentPathIndex(index);
-	}
-
-	protected void noPathFollow() {
-	}
-
-	protected void updateAutoPathToEntity() {
-		if (this.pathEndEntity == null)
-			return;
-		boolean wantsUpdate;
-		if (this.noPath()) {
-			wantsUpdate = true;
-		} else {
-			double d1 = Distance.distanceBetween(this.pathEndEntity, this.pathEndEntityLastPos);
-			double d2 = 6.0D + Distance.distanceBetween((Entity) this.theEntity, this.pathEndEntityLastPos);
-			if (d1 / d2 > 0.1D)
-				wantsUpdate = true;
-			else {
-				wantsUpdate = false;
-			}
-		}
-		if (wantsUpdate) {
-			Path newPath = this.getPathToEntity(this.pathEndEntity, 0.0F);
-			if (newPath != null) {
-				if (this.setPath(newPath, this.moveSpeed)) {
-					this.pathEndEntityLastPos = new Vec3d(this.pathEndEntity.posX, this.pathEndEntity.posY,
-							this.pathEndEntity.posZ);
-				}
-			}
-		}
-	}
-
-	protected double getDistanceToActiveNode() {
-		if (this.activeNode != null) {
-			double dX = this.activeNode.pos.x + 0.5D - this.theEntity.posX;
-			double dY = this.activeNode.pos.y - this.theEntity.posY;
-			double dZ = this.activeNode.pos.z + 0.5D - this.theEntity.posZ;
-			return Math.sqrt(dX * dX + dY * dY + dZ * dZ);
-		}
-		return 0.0D;
-	}
-
-	/**
-	 * Handles any actions that should be executed while moving along the path, such
-	 * as building bridges in the case of the Pig Engineer.
-	 * 
-	 * @return {@code false} if you want the entity to stop moving along the path
-	 */
-	protected boolean handlePathAction() {
-		this.nodeActionFinished = true;
-		return true;
-	}
-
-	protected boolean setDoingTask() {
-		this.waitingForNotify = true;
-		this.actionCleared = false;
-		return true;
-	}
-
-	protected boolean setDoingTaskAndHold() {
-		this.waitingForNotify = true;
-		this.actionCleared = false;
-		this.setMaintainPosOnWait(new Vec3d(this.theEntity.posX, this.theEntity.posY, this.theEntity.posZ));
-		this.theEntity.setIsHoldingIntoLadder(true);
-		return true;
-	}
-
-	protected boolean setDoingTaskAndHoldOnPoint() {
-		this.waitingForNotify = true;
-		this.actionCleared = false;
-		this.setMaintainPosOnWait(this.activeNode.pos.addVector(0.5d, 0d, 0.5d));// new
-																					// Vec3d(this.activeNode.getXCoord()
-																					// + 0.5D,
-																					// this.activeNode.getYCoord(),
-																					// this.activeNode.getZCoord() +
-																					// 0.5D));
-		this.theEntity.setIsHoldingIntoLadder(true);
-		return true;
-	}
-
-	protected void resetStatus() {
-		this.setNoMaintainPos();
-		this.theEntity.setIsHoldingIntoLadder(false);
-		this.nodeActionFinished = true;
-		this.actionCleared = true;
-		this.waitingForNotify = false;
-	}
-
-	protected Vec3d getEntityPosition() {
-		return new Vec3d(this.theEntity.posX, this.getPathableYPos(), this.theEntity.posZ);
-	}
-
-	public EntityIMLiving getEntity() {
-		return this.theEntity;
-	}
-
-	private int getPathableYPos() {
-		if ((!this.theEntity.isInWater()) || (!this.canSwim)) {
-			return (int) (this.theEntity.getEntityBoundingBox().minY + 0.5D);
-		}
-
-		int i = (int) this.theEntity.getEntityBoundingBox().minY;
-		Block block = this.theEntity.world
-				.getBlockState(
-						new BlockPos(MathHelper.floor(this.theEntity.posX), i, MathHelper.floor(this.theEntity.posZ)))
-				.getBlock();
-		int k = 0;
-
-		while ((block == Blocks.WATER) || (block == Blocks.FLOWING_WATER)) {
-			i++;
-			block = this.theEntity.world.getBlockState(
-					new BlockPos(MathHelper.floor(this.theEntity.posX), i, MathHelper.floor(this.theEntity.posZ)))
-					.getBlock();
-
-			k++;
-			if (k > 16) {
-				return (int) this.theEntity.getEntityBoundingBox().minY;
-			}
-		}
-
-		return i;
-	}
-
-	protected boolean canNavigate() {
-		return true;
-	}
-
-	protected boolean isInLiquid() {
-		return (this.theEntity.isInWater()) || (this.theEntity.isInLava()); // (this.theEntity.handleLavaMovement());
-	}
-
-	protected Vec3d findValidPointNear(double x, double z, int min, int max, int verticalRange) {
-		double xOffset = x - this.theEntity.posX;
-		double zOffset = z - this.theEntity.posZ;
-		double h = Math.sqrt(xOffset * xOffset + zOffset * zOffset);
-
-		if (h < 0.5D) {
-			return null;
-		}
-
-		double distance = min + this.theEntity.getRNG().nextInt(max - min);
-		int xi = MathHelper.floor(xOffset * (distance / h) + this.theEntity.posX);
-		int zi = MathHelper.floor(zOffset * (distance / h) + this.theEntity.posZ);
-		int y = MathHelper.floor(this.theEntity.posY);
-
-		Path entityPath = null;
-		for (int vertical = 0; vertical < verticalRange; vertical = vertical > 0 ? vertical * -1 : vertical * -1 + 1) {
-			for (int i = -1; i <= 1; i++) {
-				for (int j = -1; j <= 1; j++) {
-					if (this.theEntity.canStandAtAndIsValid(this.theEntity.world,
-							new BlockPos(xi + i, y + vertical, zi + j))) {
-						return new Vec3d(xi + i, y + vertical, zi + j);
-					}
-				}
-			}
-		}
-
-		return null;
-	}
-
-	protected void removeSunnyPath() {
-		if (this.theEntity.world.canBlockSeeSky(new BlockPos(MathHelper.floor(this.theEntity.posX),
-				(int) (this.theEntity.getEntityBoundingBox().minY + 0.5D), MathHelper.floor(this.theEntity.posZ)))) {
-			return;
-		}
-
-		for (int i = 0; i < this.path.getCurrentPathLength(); i++) {
-			PathNode pathpoint = this.path.getPathPointFromIndex(i);
-
-			if (this.theEntity.world.canBlockSeeSky(new BlockPos(pathpoint.pos))) {
-				this.path.setCurrentPathLength(i - 1);
-				return;
-			}
-		}
-	}
-
-	protected boolean isDirectPathBetweenPoints(Vec3d pos1, Vec3d pos2, int xSize, int ySize, int zSize) {
-		int x = MathHelper.floor(pos1.x);
-		int z = MathHelper.floor(pos1.z);
-		double dX = pos2.x - pos1.x;
-		double dZ = pos2.z - pos1.z;
-		double dXZsq = dX * dX + dZ * dZ;
-
-		if (dXZsq < 1.0E-008D) {
-			return false;
-		}
-
-		double scale = 1.0D / Math.sqrt(dXZsq);
-		dX *= scale;
-		dZ *= scale;
-		xSize += 2;
-		zSize += 2;
-
-		if (!this.isSafeToStandAt(x, (int) pos1.y, z, xSize, ySize, zSize, pos1, dX, dZ)) {
-			return false;
-		}
-
-		xSize -= 2;
-		zSize -= 2;
-		double xIncrement = 1.0D / Math.abs(dX);
-		double zIncrement = 1.0D / Math.abs(dZ);
-		double xOffset = x * 1 - pos1.x;
-		double zOffset = z * 1 - pos1.z;
-
-		if (dX >= 0.0D) {
-			xOffset += 1.0D;
-		}
-
-		if (dZ >= 0.0D) {
-			zOffset += 1.0D;
-		}
-
-		xOffset /= dX;
-		zOffset /= dZ;
-		byte xDirection = (byte) (dX >= 0.0D ? 1 : -1);
-		byte zDirection = (byte) (dZ >= 0.0D ? 1 : -1);
-		int x2 = MathHelper.floor(pos2.x);
-		int z2 = MathHelper.floor(pos2.z);
-		int xDiff = x2 - x;
-
-		for (int i = z2 - z; (xDiff * xDirection > 0) || (i * zDirection > 0);) {
-			if (xOffset < zOffset) {
-				xOffset += xIncrement;
-				x += xDirection;
-				xDiff = x2 - x;
-			} else {
-				zOffset += zIncrement;
-				z += zDirection;
-				i = z2 - z;
-			}
-
-			if (!this.isSafeToStandAt(x, (int) pos1.y, z, xSize, ySize, zSize, pos1, dX, dZ)) {
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	protected boolean isSafeToStandAt(int xOffset, int yOffset, int zOffset, int xSize, int ySize, int zSize,
-			Vec3d entityPostion, double par8, double par10) {
-		int i = xOffset - xSize / 2;
-		int j = zOffset - zSize / 2;
-
-		if (!this.isPositionClear(i, yOffset, j, xSize, ySize, zSize, entityPostion, par8, par10)) {
-			return false;
-		}
-
-		for (int k = i; k < i + xSize; k++) {
-			for (int l = j; l < j + zSize; l++) {
-				double d = k + 0.5D - entityPostion.x;
-				double d1 = l + 0.5D - entityPostion.z;
-
-				if (d * par8 + d1 * par10 >= 0.0D) {
-					IBlockState blockState = this.theEntity.world.getBlockState(new BlockPos(k, yOffset - 1, l));
-
-					if (blockState.getBlock() == Blocks.AIR) {
-						return false;
-					}
-
-					Material material = blockState.getMaterial();
-
-					if ((material == Material.WATER) && (!this.theEntity.isInWater()))
-						return false;
-					if (material == Material.CACTUS)
-						return false;
-					if (material == Material.LAVA)
-						return false;
-					if (!material.isSolid())
-						return false;
-				}
-			}
-		}
-		return true;
-	}
-
-	protected boolean isPositionClear(int xOffset, int yOffset, int zOffset, int xSize, int ySize, int zSize,
-			Vec3d entityPostion, double vecX, double vecZ) {
-		for (int i = xOffset; i < xOffset + xSize; i++) {
-			for (int j = yOffset; j < yOffset + ySize; j++) {
-				for (int k = zOffset; k < zOffset + zSize; k++) {
-					double d = i + 0.5D - entityPostion.x;
-					double d1 = k + 0.5D - entityPostion.z;
-
-					if (d * vecX + d1 * vecZ >= 0.0D) {
-						Block block = this.theEntity.world.getBlockState(new BlockPos(i, j, k)).getBlock();
-
-						if ((block != Blocks.AIR) && (!block.isPassable(this.theEntity.world, new BlockPos(i, j, k)))) {
-							return false;
-						}
-					}
-				}
-			}
-		}
-		return true;
-	}
-
-	protected boolean isPositionClearFrom(BlockPos pos0, BlockPos pos1, EntityIMLiving entity) {
-		return this.isPositionClearFrom(pos0.getX(), pos0.getY(), pos0.getZ(), pos1.getX(), pos1.getY(), pos1.getZ(),
-				entity);
-	}
-
-	protected boolean isPositionClearFrom(int x1, int y1, int z1, int x2, int y2, int z2, EntityIMLiving entity) {
-		if (y2 > y1) {
-			Block block = this.theEntity.world.getBlockState(new BlockPos(x1, y1 + entity.getCollideSize().getY(), z1))
-					.getBlock();
-			if ((block != Blocks.AIR) && (!block.isPassable(this.theEntity.world,
-					new BlockPos(x1, y1 + entity.getCollideSize().getY(), z1)))) {
-				return false;
-			}
-		}
-
-		return this.isPositionClear(x2, y2, z2, entity);
-	}
-
-	protected boolean isPositionClear(int x, int y, int z, EntityIMLiving entity) {
-		BlockPos size = entity.getCollideSize();
-		return this.isPositionClear(x, y, z, size.getX(), size.getY(), size.getZ());
-	}
-
-	protected boolean isPositionClear(BlockPos pos, EntityIMLiving entity) {
-		return this.isPositionClear(pos.getX(), pos.getY(), pos.getZ(), entity);
-	}
-
-	protected boolean isPositionClear(int x, int y, int z, int xSize, int ySize, int zSize) {
-		for (int i = x; i < x + xSize; i++) {
-			for (int j = y; j < y + ySize; j++) {
-				for (int k = z; k < z + zSize; k++) {
-					Block block = this.theEntity.world.getBlockState(new BlockPos(i, j, k)).getBlock();
-
-					if ((block != Blocks.AIR) && (!block.isPassable(this.theEntity.world, new BlockPos(i, j, k)))) {
-						return false;
-					}
-				}
-			}
-		}
-
-		return true;
-	}
-
-	protected ChunkCache getChunkCache(BlockPos pos0, BlockPos pos1, float axisExpand) {
-		return this.getChunkCache(pos0.getX(), pos0.getY(), pos0.getZ(), pos1.getX(), pos1.getY(), pos1.getZ(),
-				axisExpand);
-	}
-
-	protected ChunkCache getChunkCache(int x1, int y1, int z1, int x2, int y2, int z2, float axisExpand) {
-		int d = (int) axisExpand;
-		int cX2;
-		int cX1;
-		if (x1 < x2) {
-			cX1 = x1 - d;
-			cX2 = x2 + d;
-		} else {
-			cX2 = x1 + d;
-			cX1 = x2 - d;
-		}
-		int cY2;
-		int cY1;
-		if (y1 < y2) {
-			cY1 = y1 - d;
-			cY2 = y2 + d;
-		} else {
-			cY2 = y1 + d;
-			cY1 = y2 - d;
-		}
-		int cZ2;
-		int cZ1;
-		if (z1 < z2) {
-			cZ1 = z1 - d;
-			cZ2 = z2 + d;
-		} else {
-			cZ2 = z1 + d;
-			cZ1 = z2 - d;
-		}
-
-		BlockPos blockPos1 = new BlockPos(cX1, cY1, cZ1);
-		BlockPos blockPos2 = new BlockPos(cX1, cY2, cZ2);
-		return new ChunkCache(this.theEntity.world, blockPos1, blockPos2, 0);
-	}
+import invmod.block.NexusBlockEntity;
+import invmod.entity.Invader;
+import invmod.entity.ai.AttackerAI;
+import invmod.entity.terrain.TaskListener;
+import invmod.entity.terrain.TerrainBuilder;
+import invmod.entity.terrain.TerrainDigger;
+import invmod.entity.terrain.TerrainModifier;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Follows an invader path (original NavigatorIM / NavigatorEngy): walks from node to node, takes shortcuts
+ * where the way is clear, digs out nodes that are blocked, climbs ladders, and lets engineers build what the
+ * next node needs while holding still.
+ */
+public class NavigatorIM implements TaskListener {
+    private static final int NODE_LIMIT = 1600;
+    private final Mob mob;
+    private final Invader invader;
+    private final MobPathing pathing;
+    private final Pathfinder pathfinder = new Pathfinder();
+    private final TerrainModifier modifier;
+    private final TerrainDigger digger;
+    private final @Nullable TerrainBuilder builder;
+    private @Nullable Path path;
+    private double speed = 1.0;
+    private int ticksStuck;
+    private double lastDistance;
+    private boolean waiting;
+    private boolean nodeActionDone = true;
+    private int lastResult;
+    private @Nullable Vec3 holdPos;
+    private float lastPathDistanceToTarget;
+
+    public NavigatorIM(Mob mob) {
+        this.mob = mob;
+        this.invader = (Invader) mob;
+        boolean engineer = this.invader.terrainSkill() == Invader.TerrainSkill.BUILD_LADDERS;
+        this.pathing = engineer ? new EngineerPathing(mob) : new MobPathing(mob);
+        this.modifier = new TerrainModifier(mob, engineer ? 2.8F : 2.0F);
+        this.digger = new TerrainDigger(mob, this.modifier);
+        this.builder = engineer ? new TerrainBuilder(mob, this.modifier, this.invader.buildMaterial(), this.invader.buildMaterialCost()) : null;
+    }
+
+    public @Nullable TerrainBuilder builder() {
+        return this.builder;
+    }
+
+    public MobPathing pathing() {
+        return this.pathing;
+    }
+
+    // ------------------------------------------------------------------ path requests
+
+    private @Nullable AttackerAI attackerAI() {
+        NexusBlockEntity nexus = this.invader.getNexus();
+        return nexus == null ? null : nexus.getAttackerAI();
+    }
+
+    /** Plans a path to the target and starts following it. Returns false when not even a partial path exists. */
+    public boolean moveTo(BlockPos target, float targetRadius, double speed) {
+        BlockPos start = this.startPos();
+        this.pathing.setGoal(target);
+        float range = 12.0F + (float) Math.sqrt(start.distSqr(target));
+        Path newPath = this.pathfinder.createPath(this.pathing, new TerrainView(this.mob.level(), this.attackerAI()), start,
+                target, targetRadius, range, NODE_LIMIT);
+        if (newPath == null) {
+            this.clearPath();
+            this.lastPathDistanceToTarget = (float) Math.sqrt(start.distSqr(target));
+            return false;
+        }
+        this.setPath(newPath, speed);
+        return true;
+    }
+
+    private BlockPos startPos() {
+        if (this.pathing.sizeX() <= 1) {
+            return BlockPos.containing(this.mob.getX(), this.mob.getBoundingBox().minY + 0.5, this.mob.getZ());
+        }
+        return BlockPos.containing(this.mob.getBoundingBox().minX, this.mob.getBoundingBox().minY + 0.5,
+                this.mob.getBoundingBox().minZ);
+    }
+
+    public void setPath(Path newPath, double speed) {
+        this.modifier.cancel();
+        this.resetStatus();
+        this.path = newPath;
+        this.speed = speed;
+        this.ticksStuck = 0;
+        this.lastPathDistanceToTarget = newPath.distanceEndToTarget();
+        newPath.setIndex(newPath.length() > 1 ? 1 : 0);
+        this.onNodeReached();
+        this.lastDistance = this.distanceToActiveNode();
+    }
+
+    public void clearPath() {
+        this.path = null;
+        this.modifier.cancel();
+        this.resetStatus();
+    }
+
+    public boolean noPath() {
+        return this.path == null || this.path.isFinished();
+    }
+
+    public @Nullable Path getPath() {
+        return this.path;
+    }
+
+    public int stuckTime() {
+        return this.ticksStuck;
+    }
+
+    public boolean isWaitingForTask() {
+        return this.waiting;
+    }
+
+    /** How far the last planned path ended from its target (large: the nexus is out of reach for now). */
+    public float lastPathDistanceToTarget() {
+        return this.lastPathDistanceToTarget;
+    }
+
+    public String debugString() {
+        if (this.path == null) {
+            return "no path (last end distance " + this.lastPathDistanceToTarget + ")";
+        }
+        return "node " + this.path.index() + "/" + this.path.length() + " " + this.path.current() + " end=" + this.path.last()
+                + " waiting=" + this.waiting + " actionDone=" + this.nodeActionDone + " stuck=" + this.ticksStuck
+                + " busy=" + this.modifier.isBusy();
+    }
+
+    // ------------------------------------------------------------------ following
+
+    public void tick() {
+        this.modifier.tick();
+        if (this.waiting) {
+            if (this.holdPos != null) {
+                this.hold();
+            }
+            return;
+        }
+        this.releaseHold();
+        if (this.noPath()) {
+            return;
+        }
+        PathNode node = this.path.current();
+        if (node == null) {
+            return;
+        }
+
+        if (!this.nodeActionDone) {
+            if (!this.handleNodeAction(node)) {
+                this.clearPath();
+            }
+            return;
+        }
+
+        double distance = this.distanceToActiveNode();
+        if (this.lastDistance - distance > 0.01) {
+            this.lastDistance = distance;
+            this.ticksStuck = Math.max(0, this.ticksStuck - 1);
+        } else {
+            this.ticksStuck++;
+        }
+
+        int before = this.path.index();
+        this.advance();
+        if (this.noPath()) {
+            return;
+        }
+        if (this.path.index() != before) {
+            this.ticksStuck = 0;
+            this.onNodeReached();
+            this.lastDistance = this.distanceToActiveNode();
+            if (!this.nodeActionDone) {
+                return;
+            }
+        }
+        node = this.path.current();
+
+        if (!this.isClear(node)) {
+            // The next node is blocked: dig it out (the original onPathBlocked).
+            if (this.invader.terrainSkill() != Invader.TerrainSkill.NONE && this.invader.canDigNow()
+                    && this.digger.askClearPosition(node.pos(), this.pathing.sizeX(), this.pathing.sizeY(), this, 1.0F)) {
+                this.waiting = true;
+                this.holdPos = this.mob.position();
+                return;
+            }
+        }
+        this.moveToward(node);
+    }
+
+    private void onNodeReached() {
+        PathNode node = this.path == null ? null : this.path.current();
+        this.nodeActionDone = node == null || node.action == PathAction.NONE || node.action == PathAction.SWIM
+                || (node.action.isLadder() && this.mob.level().getBlockState(node.pos()).is(Blocks.LADDER));
+    }
+
+    /** Engineers build what a node needs; diggers dig down. Returns false to give up the path. */
+    private boolean handleNodeAction(PathNode node) {
+        if (this.lastResult != TaskListener.SUCCESS) {
+            this.lastResult = TaskListener.SUCCESS;
+            return false;
+        }
+        boolean asked = false;
+        if (node.action == PathAction.DIG) {
+            asked = this.digger.askClearPosition(node.pos(), this.pathing.sizeX(), this.pathing.sizeY(), this, 1.0F);
+        } else if (this.builder != null) {
+            if (node.action.isLadder()) {
+                asked = this.builder.askBuildLadder(node.pos(), node.action.wallSide(), this);
+            } else if (node.action.isLadderTower()) {
+                asked = this.builder.askBuildLadderTower(node.pos(), node.action.wallSide(), 1, this);
+            } else if (node.action == PathAction.BRIDGE) {
+                asked = this.builder.askBuildBridge(node.pos(), this);
+            } else if (node.action == PathAction.SCAFFOLD_UP) {
+                asked = this.builder.askBuildScaffoldLayer(node.pos(), this.attackerAI(), this);
+            }
+        }
+        this.nodeActionDone = true;
+        if (asked) {
+            this.waiting = true;
+            this.holdPos = this.mob.position();
+        }
+        return true;
+    }
+
+    @Override
+    public void onTaskFinished(int result) {
+        this.waiting = false;
+        this.lastResult = result;
+        if (result != TaskListener.SUCCESS) {
+            this.clearPath();
+        }
+    }
+
+    /** Moves the path index past nodes we have reached, and skips ahead along straight, clear stretches. */
+    private void advance() {
+        Vec3 pos = this.mob.position();
+        int feetY = Mth.floor(this.mob.getBoundingBox().minY + 0.5);
+        double reach = Math.max(0.5, this.mob.getBbWidth() * 0.5);
+        while (!this.path.isFinished()) {
+            PathNode node = this.path.current();
+            Vec3 center = this.nodeCenter(node);
+            double dx = center.x - pos.x;
+            double dz = center.z - pos.z;
+            boolean horizontal = dx * dx + dz * dz < reach * reach;
+            boolean vertical = node.y == feetY || (node.y < feetY && this.mob.onGround()) || (node.y <= feetY && node.action.isLadder());
+            if (horizontal && vertical) {
+                this.path.setIndex(this.path.index() + 1);
+                if (!this.path.isFinished() && this.path.current().action != PathAction.NONE) {
+                    return;
+                }
+            } else {
+                break;
+            }
+        }
+        if (this.path.isFinished() || !this.mob.onGround()) {
+            return;
+        }
+        // Shortcut: aim for the furthest of the next few plain nodes on this level that we can walk to directly.
+        int best = this.path.index();
+        for (int i = this.path.index() + 1; i < Math.min(this.path.length(), this.path.index() + 6); i++) {
+            PathNode n = this.path.node(i);
+            if (n.action != PathAction.NONE || n.y != feetY) {
+                break;
+            }
+            if (this.isDirect(pos, this.nodeCenter(n))) {
+                best = i;
+            }
+        }
+        if (best != this.path.index()) {
+            this.path.setIndex(best);
+        }
+    }
+
+    private boolean isDirect(Vec3 from, Vec3 to) {
+        Vec3 d = to.subtract(from);
+        double len = d.horizontalDistance();
+        if (len < 1.0E-4) {
+            return true;
+        }
+        // Rays along both edges of the mob as well as its centre, at foot and head height.
+        double half = this.mob.getBbWidth() * 0.5 + 0.05;
+        Vec3 side = new Vec3(-d.z / len * half, 0, d.x / len * half);
+        double[] heights = {0.3, this.mob.getBbHeight() - 0.2};
+        for (Vec3 offset : new Vec3[] {Vec3.ZERO, side, side.reverse()}) {
+            for (double h : heights) {
+                Vec3 a = from.add(offset).add(0, h, 0);
+                Vec3 b = to.add(offset).add(0, h, 0);
+                if (this.mob.level().clip(new ClipContext(a, b, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this.mob))
+                        .getType() != HitResult.Type.MISS) {
+                    return false;
+                }
+            }
+        }
+        // There must be ground all along the way.
+        int steps = (int) Math.ceil(d.horizontalDistance());
+        for (int s = 1; s <= steps; s++) {
+            Vec3 p = from.add(d.scale((double) s / steps));
+            BlockPos below = BlockPos.containing(p.x, from.y - 0.5, p.z);
+            if (MobPathing.isPassable(new TerrainView(this.mob.level(), null), below, this.mob.level().getBlockState(below))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Vec3 nodeCenter(PathNode node) {
+        return new Vec3(node.x + this.pathing.sizeX() * 0.5, node.y, node.z + this.pathing.sizeZ() * 0.5);
+    }
+
+    private boolean isClear(PathNode node) {
+        TerrainView view = new TerrainView(this.mob.level(), null);
+        int c = this.pathing.collide(view, node.pos());
+        if (c == MobPathing.DIGGABLE || c == MobPathing.BLOCKED) {
+            return false;
+        }
+        if (node.y > Mth.floor(this.mob.getY())) {
+            BlockPos head = this.mob.blockPosition().above(this.pathing.sizeY());
+            return MobPathing.isPassable(view, head, this.mob.level().getBlockState(head));
+        }
+        return true;
+    }
+
+    private void moveToward(PathNode node) {
+        if (this.mob.onClimbable() && !this.mob.onGround()) {
+            this.moveOnLadder(node);
+            return;
+        }
+        Vec3 target = this.nodeCenter(node);
+        if (node.action.isLadder() || node.action.isLadderTower()) {
+            // Lean against the wall the ladder hangs on (that is what makes a mob climb), without leaving the
+            // ladder's column.
+            Direction wall = node.action.wallSide();
+            double lean = 0.55 - this.mob.getBbWidth() * 0.5;
+            target = target.add(wall.getStepX() * lean, 0, wall.getStepZ() * lean);
+        } else if (node.y > Mth.floor(this.mob.getY()) && this.invader.canClimbWalls()) {
+            target = target.add(0, 1, 0);
+        }
+        this.mob.getMoveControl().setWantedPosition(target.x, target.y, target.z, this.speed);
+    }
+
+    /**
+     * Movement while hanging on a ladder. Vanilla move control makes a mob jump whenever it stands inside a
+     * block with a collision box, and a ladder has one; on a ladder that means "climb", so mobs could never
+     * stop or step off sideways and got pinned under overhangs. Here the mob climbs only when the next node
+     * is higher, keeps its height when stepping off, and moves straight at the next node.
+     */
+    private void moveOnLadder(PathNode node) {
+        Vec3 target = this.nodeCenter(node);
+        double dx = target.x - this.mob.getX();
+        double dz = target.z - this.mob.getZ();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        double dy = node.y - this.mob.getY();
+        boolean sideways = horizontal > 0.3;
+        double vx;
+        double vz;
+        double vy;
+        if (dy < -0.5) {
+            // Climb down.
+            vy = -0.15;
+        } else if (dy > -0.2) {
+            // Climb until the feet are a little above the node, so the mob clears the edge it steps onto.
+            vy = 0.2;
+        } else {
+            vy = 0.0;
+        }
+        if (sideways && this.mob.getY() > node.y - 0.3) {
+            double speed = Math.min(0.15, horizontal);
+            vx = dx / horizontal * speed;
+            vz = dz / horizontal * speed;
+        } else {
+            // Stay in the middle of the ladder column we are in while climbing.
+            BlockPos column = this.mob.blockPosition();
+            vx = (column.getX() + 0.5 - this.mob.getX()) * 0.3;
+            vz = (column.getZ() + 0.5 - this.mob.getZ()) * 0.3;
+        }
+        this.mob.getNavigation().stop();
+        this.mob.setZza(0.0F);
+        this.mob.setJumping(false);
+        this.mob.setDeltaMovement(vx, vy, vz);
+        this.mob.getLookControl().setLookAt(target.x, target.y + this.mob.getEyeHeight(), target.z);
+        if (sideways) {
+            this.mob.setYRot((float) (Math.atan2(dz, dx) * 180.0 / Math.PI) - 90.0F);
+        }
+    }
+
+    private double distanceToActiveNode() {
+        PathNode node = this.path == null ? null : this.path.current();
+        if (node == null) {
+            return 0.0;
+        }
+        return Math.sqrt(this.mob.distanceToSqr(this.nodeCenter(node)));
+    }
+
+    // ------------------------------------------------------------------ holding still while working
+
+    private void hold() {
+        if (this.mob.onClimbable()) {
+            // Hang on the ladder while building: no sliding down.
+            this.mob.setNoGravity(true);
+            this.mob.setDeltaMovement(0, 0, 0);
+        } else {
+            this.mob.getMoveControl().setWantedPosition(this.holdPos.x, this.holdPos.y, this.holdPos.z, this.speed);
+        }
+    }
+
+    private void releaseHold() {
+        if (this.mob.isNoGravity() && this.holdPos != null) {
+            this.mob.setNoGravity(false);
+        }
+        this.holdPos = null;
+    }
+
+    private void resetStatus() {
+        if (this.mob.isNoGravity()) {
+            this.mob.setNoGravity(false);
+        }
+        this.waiting = false;
+        this.holdPos = null;
+        this.nodeActionDone = true;
+        this.lastResult = TaskListener.SUCCESS;
+    }
 }

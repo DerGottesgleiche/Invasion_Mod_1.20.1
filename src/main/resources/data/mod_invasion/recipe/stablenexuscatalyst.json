@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:smelting",
+  "ingredient": "mod_invasion:stablecatalystmixture",
+  "result": {
+    "id": "mod_invasion:stablenexuscatalyst"
+  },
+  "experience": 1.0,
+  "cookingtime": 200
+}

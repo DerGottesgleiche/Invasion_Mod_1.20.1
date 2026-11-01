@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "X ",
+    "X#",
+    "X "
+  ],
+  "key": {
+    "X": "mod_invasion:riftflux",
+    "#": "minecraft:diamond_sword"
+  },
+  "result": {
+    "id": "mod_invasion:infusedsword",
+    "count": 1
+  }
+}

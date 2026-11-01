@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    "mod_invasion:emptytrap",
+    "minecraft:spider_eye",
+    "minecraft:fermented_spider_eye"
+  ],
+  "result": {
+    "id": "mod_invasion:poisontrap",
+    "count": 1
+  }
+}

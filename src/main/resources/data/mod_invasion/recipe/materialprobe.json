@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "D",
+    "#",
+    "X"
+  ],
+  "key": {
+    "X": "minecraft:stick",
+    "#": "mod_invasion:phasecrystal",
+    "D": "mod_invasion:nexusadjuster"
+  },
+  "result": {
+    "id": "mod_invasion:materialprobe",
+    "count": 1
+  }
+}

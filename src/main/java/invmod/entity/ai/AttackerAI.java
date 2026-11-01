@@ -1,371 +1,203 @@
 package invmod.entity.ai;
 
-import java.util.ArrayList;
-import java.util.List;
-
-//NOOB HAUS: Done
-
-import invmod.IBlockAccessExtended;
-import invmod.IPathfindable;
-import invmod.TerrainDataLayer;
-import invmod.entity.EntityIMLiving;
-import invmod.entity.IPathSource;
-import invmod.entity.Scaffold;
+import invmod.block.NexusBlockEntity;
+import invmod.entity.ai.navigator.EngineerPathing;
 import invmod.entity.ai.navigator.Path;
 import invmod.entity.ai.navigator.PathAction;
-import invmod.entity.ai.navigator.PathCreator;
 import invmod.entity.ai.navigator.PathNode;
-import invmod.entity.monster.EntityIMMob;
-import invmod.tileentity.TileEntityNexus;
-import invmod.util.Coords;
-import invmod.util.Distance;
-import net.minecraft.nbt.NBTTagCompound;
-import net.minecraft.nbt.NBTTagList;
-import net.minecraft.util.EnumParticleTypes;
-import net.minecraft.util.IntHashMap;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.ChunkCache;
-import net.minecraft.world.IBlockAccess;
+import invmod.entity.ai.navigator.Pathfinder;
+import invmod.entity.ai.navigator.ScaffoldPathing;
+import invmod.entity.ai.navigator.TerrainView;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
+import org.jspecify.annotations.Nullable;
 
+/**
+ * The nexus' coordination of its attackers (original AttackerAI): it keeps a map of how many invaders stand
+ * where, so paths spread the horde out, and plans scaffolds when engineers cannot otherwise reach a nexus.
+ */
 public class AttackerAI {
-	private TileEntityNexus nexus;
-	private IPathSource pathSource;
-	private IntHashMap entityDensityData;
-	private List<Scaffold> scaffolds;
-	private int scaffoldLimit;
-	private int minDistanceBetweenScaffolds;
-	private int nextScaffoldCalcTimer;
-	private int updateScaffoldTimer;
-	private int nextEntityDensityUpdate;
+    private static final int SCAFFOLD_SEARCH_NODES = 6000;
+    private final NexusBlockEntity nexus;
+    private final Long2IntOpenHashMap density = new Long2IntOpenHashMap();
+    private final List<Scaffold> scaffolds = new ArrayList<>();
+    private final Pathfinder pathfinder = new Pathfinder();
+    private int scaffoldLimit = 2;
+    private int minDistanceBetweenScaffolds = 9;
+    private int nextScaffoldCalcTimer;
+    private int updateScaffoldTimer;
+    private int nextDensityUpdate;
 
-	public AttackerAI(TileEntityNexus nexus) {
-		this.nexus = nexus;
-		this.pathSource = new PathCreator();
-		this.pathSource.setSearchDepth(8500);
-		this.pathSource.setQuickFailDepth(8500);
-		this.entityDensityData = new IntHashMap();
-		this.scaffolds = new ArrayList();
-	}
+    public AttackerAI(NexusBlockEntity nexus) {
+        this.nexus = nexus;
+    }
 
-	public void update() {
-		this.nextScaffoldCalcTimer -= 1;
-		if (--this.updateScaffoldTimer <= 0) {
-			this.updateScaffoldTimer = 40;
-			this.updateScaffolds();
+    public void tick(List<Mob> mobs) {
+        this.nextScaffoldCalcTimer--;
+        if (--this.updateScaffoldTimer <= 0) {
+            this.updateScaffoldTimer = 40;
+            this.updateScaffolds();
+            this.scaffoldLimit = 2 + this.nexus.getCurrentWave() / 2;
+            this.minDistanceBetweenScaffolds = 90 / (this.nexus.getCurrentWave() + 10);
+        }
+        if (--this.nextDensityUpdate <= 0) {
+            this.nextDensityUpdate = 20;
+            this.density.clear();
+            for (Mob mob : mobs) {
+                long key = mob.blockPosition().asLong();
+                this.density.put(key, Math.min(7, this.density.get(key) + 1));
+            }
+        }
+    }
 
-			this.scaffoldLimit = (2 + this.nexus.getCurrentWave() / 2);
-			this.minDistanceBetweenScaffolds = (90 / (this.nexus.getCurrentWave() + 10));
-		}
+    public int densityAt(int x, int y, int z) {
+        return this.density.get(BlockPos.asLong(x, y, z));
+    }
 
-		if (--this.nextEntityDensityUpdate <= 0) {
-			this.nextEntityDensityUpdate = 20;
-			this.updateDensityData();
-		}
-	}
+    public List<Scaffold> getScaffolds() {
+        return this.scaffolds;
+    }
 
-	public IBlockAccessExtended wrapEntityData(IBlockAccess terrainMap) {
-		TerrainDataLayer newTerrain = new TerrainDataLayer(terrainMap);
-		newTerrain.setAllData(this.entityDensityData);
-		return newTerrain;
-	}
+    public int minDistanceBetweenScaffolds() {
+        return this.minDistanceBetweenScaffolds;
+    }
 
-	public int getMinDistanceBetweenScaffolds() {
-		return this.minDistanceBetweenScaffolds;
-	}
+    public @Nullable Scaffold scaffoldAt(int x, int y, int z) {
+        for (Scaffold scaffold : this.scaffolds) {
+            if (scaffold.contains(x, y, z)) {
+                return scaffold;
+            }
+        }
+        return null;
+    }
 
-	public List<Scaffold> getScaffolds() {
-		return this.scaffolds;
-	}
+    /** An engineer that cannot reach the nexus asks for scaffolds; returns whether new ones were planned. */
+    public boolean askGenerateScaffolds(Mob engineer) {
+        if (this.nextScaffoldCalcTimer > 0 || this.scaffolds.size() > this.scaffoldLimit || this.nexus.getLevel() == null) {
+            return false;
+        }
+        this.nextScaffoldCalcTimer = 200;
+        Level level = this.nexus.getLevel();
+        EngineerPathing base = new EngineerPathing(engineer);
+        BlockPos target = this.nexus.getBlockPos();
+        base.setGoal(target);
+        ScaffoldPathing scaffoldPathing = new ScaffoldPathing(base, this);
+        BlockPos start = engineer.blockPosition();
+        float range = 12.0F + (float) Math.sqrt(start.distSqr(target));
+        Path path = this.pathfinder.createPath(scaffoldPathing, new TerrainView(level, this), start, target, 1.1F, range,
+                SCAFFOLD_SEARCH_NODES);
+        if (path == null) {
+            return false;
+        }
+        List<Scaffold> found = this.extractScaffolds(path, level);
+        if (found.isEmpty()) {
+            return false;
+        }
+        if (found.size() > 1) {
+            // Keep only the scaffolds the engineers cannot do without, as the original did.
+            List<Scaffold> needed = new ArrayList<>();
+            for (Scaffold candidate : found) {
+                Path without = this.pathfinder.createPath(base, new TerrainView(level, this, candidate.pos()), start, target,
+                        1.1F, range, SCAFFOLD_SEARCH_NODES);
+                if (without == null || without.distanceEndToTarget() > 1.5F) {
+                    needed.add(candidate);
+                }
+            }
+            found = needed.isEmpty() ? found.subList(0, 1) : needed;
+        }
+        this.scaffolds.addAll(found);
+        return true;
+    }
 
-	public boolean askGenerateScaffolds(EntityIMMob entity) {
-		if ((this.nextScaffoldCalcTimer > 0) || (this.scaffolds.size() > this.scaffoldLimit)) {
-			return false;
-		}
-		this.nextScaffoldCalcTimer = 200;
-		List newScaffolds = this.findMinScaffolds(entity, new BlockPos(MathHelper.floor(entity.posX),
-				MathHelper.floor(entity.posY), MathHelper.floor(entity.posZ)));
-		if ((newScaffolds != null) && (newScaffolds.size() > 0)) {
-			this.addNewScaffolds(newScaffolds);
-			return true;
-		}
+    private List<Scaffold> extractScaffolds(Path path, Level level) {
+        List<Scaffold> list = new ArrayList<>();
+        int startIndex = -1;
+        for (int i = 0; i < path.length(); i++) {
+            PathNode node = path.node(i);
+            boolean up = node.action == PathAction.SCAFFOLD_UP;
+            if (startIndex < 0 && up) {
+                startIndex = i;
+            } else if (startIndex >= 0 && !up) {
+                PathNode base = path.node(startIndex);
+                PathNode top = path.node(i - 1);
+                Scaffold scaffold = new Scaffold(new BlockPos(base.x, base.y - 1, base.z), top.y - base.y + 2);
+                this.orient(scaffold, level);
+                scaffold.setInitialIntegrity(level);
+                list.add(scaffold);
+                startIndex = -1;
+            }
+        }
+        return list;
+    }
 
-		return false;
-	}
+    /** Hang the scaffold on the side with the most existing blocks. */
+    private void orient(Scaffold scaffold, Level level) {
+        int most = -1;
+        Direction best = Direction.EAST;
+        for (Direction dir : PathAction.SIDES) {
+            int count = 0;
+            for (int h = 0; h < scaffold.targetHeight(); h++) {
+                BlockPos p1 = scaffold.pos().above(h).relative(dir);
+                BlockPos p2 = scaffold.pos().above(h).relative(dir, 2);
+                if (level.getBlockState(p1).isCollisionShapeFullBlock(level, p1)) {
+                    count++;
+                }
+                if (level.getBlockState(p2).isCollisionShapeFullBlock(level, p2)) {
+                    count++;
+                }
+            }
+            if (count > most) {
+                most = count;
+                best = dir;
+            }
+        }
+        scaffold.setOrientation(best);
+    }
 
-	public List<Scaffold> findMinScaffolds(IPathfindable pather, BlockPos pos) {
-		Scaffold scaffold = new Scaffold(this.nexus);
-		scaffold.setPathfindBase(pather);
-		Path basePath = this.createPath(scaffold, pos, this.nexus.getPos(), 12.0F);
-		if (basePath == null) {
-			return new ArrayList();
-		}
-		List scaffoldPositions = this.extractScaffolds(basePath);
-		if (scaffoldPositions.size() > 1) {
-			float lowestCost = (1.0F / 1.0F);
-			int lowestCostIndex = -1;
-			for (int i = 0; i < scaffoldPositions.size(); i++) {
-				TerrainDataLayer terrainMap = new TerrainDataLayer(
-						this.getChunkCache(pos.getX(), pos.getY(), pos.getZ(), this.nexus.getPos().getX(),
-								this.nexus.getPos().getY(), this.nexus.getPos().getZ(), 12.0F));
-				Scaffold s = (Scaffold) scaffoldPositions.get(i);
-				terrainMap.setData(s.getPos().x, s.getPos().y, s.getPos().z, Integer.valueOf(200000));
-				Path path = this.createPath(pather, pos, this.nexus.getPos(), terrainMap);
-				if ((path.getTotalPathCost() < lowestCost) && (path.getFinalPathPoint().equals(this.nexus.getPos()))) {
-					lowestCostIndex = i;
-				}
-			}
+    private void updateScaffolds() {
+        Level level = this.nexus.getLevel();
+        if (level == null) {
+            return;
+        }
+        for (int i = this.scaffolds.size() - 1; i >= 0; i--) {
+            Scaffold scaffold = this.scaffolds.get(i);
+            scaffold.updateStatus(level);
+            if (level instanceof ServerLevel server && scaffold.percentCompleted() < 1.0F) {
+                BlockPos p = scaffold.pos();
+                server.sendParticles(ParticleTypes.HAPPY_VILLAGER, p.getX() + 0.5, p.getY() + 1.5, p.getZ() + 0.5, 1, 0.2, 0.2, 0.2, 0.0);
+            }
+            // A scaffold that has been knocked down well below what was built is abandoned.
+            if (scaffold.percentIntact() + 0.05F < 0.4F * scaffold.percentCompleted()) {
+                this.scaffolds.remove(i);
+            }
+        }
+    }
 
-			if (lowestCostIndex >= 0) {
-				List s = new ArrayList();
-				s.add(scaffoldPositions.get(lowestCostIndex));
-				return s;
-			}
+    public void clear() {
+        this.scaffolds.clear();
+        this.density.clear();
+    }
 
-			List costDif = new ArrayList(scaffoldPositions.size());
-			for (int i = 0; i < scaffoldPositions.size(); i++) {
-				TerrainDataLayer terrainMap = new TerrainDataLayer(
-						this.getChunkCache(pos.getX(), pos.getY(), pos.getZ(), this.nexus.getPos().getX(),
-								this.nexus.getPos().getY(), this.nexus.getPos().getZ(), 12.0F));
-				Scaffold s = (Scaffold) scaffoldPositions.get(i);
-				for (int j = 0; j < scaffoldPositions.size(); j++) {
-					if (j != i) {
-						terrainMap.setData(s.getPos().x, s.getPos().y, s.getPos().z, Integer.valueOf(200000));
-					}
-				}
-				Path path = this.createPath(pather, pos, this.nexus.getPos(), terrainMap);
+    public void save(ValueOutput output) {
+        ValueOutput.ValueOutputList list = output.childrenList("Scaffolds");
+        for (Scaffold scaffold : this.scaffolds) {
+            scaffold.save(list.addChild());
+        }
+    }
 
-				if (!path.getFinalPathPoint().equals(this.nexus.getPos().getX(), this.nexus.getPos().getY(),
-						this.nexus.getPos().getZ())) {
-					costDif.add(s);
-				}
-
-			}
-
-			return costDif;
-		}
-
-		if (scaffoldPositions.size() == 1) {
-			return scaffoldPositions;
-		}
-
-		return null;
-	}
-
-	public void addScaffoldDataTo(IBlockAccessExtended terrainMap) {
-		for (Scaffold scaffold : this.scaffolds) {
-			for (int i = 0; i < scaffold.getTargetHeight(); i++) {
-				int data = terrainMap.getLayeredData(scaffold.getPos().x, scaffold.getPos().y + i, scaffold.getPos().z);
-				terrainMap.setData(scaffold.getPos().x, scaffold.getPos().y + i, scaffold.getPos().z,
-						Integer.valueOf(data | 0x4000));
-			}
-		}
-	}
-
-	public Scaffold getScaffoldAt(BlockPos pos) {
-		return this.getScaffoldAt(pos.getX(), pos.getY(), pos.getZ());
-	}
-
-	public Scaffold getScaffoldAt(int x, int y, int z) {
-		for (Scaffold scaffold : this.scaffolds) {
-			if ((scaffold.getPos().x == x) && (scaffold.getPos().z == z)) {
-				if ((scaffold.getPos().y <= y) && (scaffold.getPos().y + scaffold.getTargetHeight() >= y))
-					return scaffold;
-			}
-		}
-		return null;
-	}
-
-	public void onResume() {
-		for (Scaffold scaffold : this.scaffolds) {
-			scaffold.forceStatusUpdate();
-		}
-	}
-
-	public void readFromNBT(NBTTagCompound nbttagcompound) {
-		// Had to put extra int param in 1.7.2, used 0 not sure why
-		NBTTagList nbtScaffoldList = nbttagcompound.getTagList("scaffolds", 0);
-		for (int i = 0; i < nbtScaffoldList.tagCount(); i++) {
-			Scaffold scaffold = new Scaffold(this.nexus);
-			scaffold.readFromNBT(nbtScaffoldList.getCompoundTagAt(i));
-			this.scaffolds.add(scaffold);
-		}
-	}
-
-	public void writeToNBT(NBTTagCompound nbttagcompound) {
-		NBTTagList nbttaglist = new NBTTagList();
-		for (Scaffold scaffold : this.scaffolds) {
-			NBTTagCompound nbtscaffold = new NBTTagCompound();
-			scaffold.writeToNBT(nbtscaffold);
-			nbttaglist.appendTag(nbtscaffold);
-		}
-		nbttagcompound.setTag("scaffolds", nbttaglist);
-	}
-
-	private Path createPath(IPathfindable pather, Vec3d pos0, Vec3d pos1, IBlockAccess terrainMap) {
-		return this.pathSource.createPath(pather, pos0, pos1, 1.1F,
-				12.0F + (float) Distance.distanceBetween(pos0, pos1), terrainMap);
-	}
-
-	private Path createPath(IPathfindable pather, Vec3d pos0, Vec3d pos1, float axisExpand) {
-		TerrainDataLayer terrainMap = new TerrainDataLayer(
-				this.getChunkCache(new BlockPos(pos0), new BlockPos(pos1), axisExpand));
-		this.addScaffoldDataTo(terrainMap);
-		return this.createPath(pather, pos0, pos1, terrainMap);
-	}
-
-	private Path createPath(IPathfindable pather, BlockPos pos0, BlockPos pos1, IBlockAccess terrainMap) {
-		return this.createPath(pather, new Vec3d(pos0.getX(), pos0.getY(), pos0.getZ()),
-				new Vec3d(pos1.getX(), pos1.getY(), pos1.getZ()), terrainMap);
-	}
-
-	private Path createPath(IPathfindable pather, BlockPos pos0, BlockPos pos1, float axisExpand) {
-		return this.createPath(pather, new Vec3d(pos0.getX(), pos0.getY(), pos0.getZ()),
-				new Vec3d(pos1.getX(), pos1.getY(), pos1.getZ()), axisExpand);
-	}
-
-	private ChunkCache getChunkCache(BlockPos pos0, BlockPos pos1, float axisExpand) {
-		return this.getChunkCache(pos0.getX(), pos0.getY(), pos0.getZ(), pos1.getX(), pos1.getY(), pos1.getZ(),
-				axisExpand);
-	}
-
-	private ChunkCache getChunkCache(int x1, int y1, int z1, int x2, int y2, int z2, float axisExpand) {
-		int d = (int) axisExpand;
-		int cX2;
-		int cX1;
-		if (x1 < x2) {
-			cX1 = x1 - d;
-			cX2 = x2 + d;
-		} else {
-			cX2 = x1 + d;
-			cX1 = x2 - d;
-		}
-		int cY2;
-		int cY1;
-		if (y1 < y2) {
-			cY1 = y1 - d;
-			cY2 = y2 + d;
-		} else {
-			cY2 = y1 + d;
-			cY1 = y2 - d;
-		}
-		int cZ2;
-		int cZ1;
-		if (z1 < z2) {
-			cZ1 = z1 - d;
-			cZ2 = z2 + d;
-		} else {
-			cZ2 = z1 + d;
-			cZ1 = z2 - d;
-		}
-		BlockPos blockPos = new BlockPos(cX1, cY1, cZ1);
-		BlockPos blockPos2 = new BlockPos(cX2, cY2, cZ2);
-		return new ChunkCache(this.nexus.getWorld(), blockPos, blockPos2, 0);
-	}
-
-	private List<Scaffold> extractScaffolds(Path path) {
-		List scaffoldPositions = new ArrayList();
-		boolean flag = false;
-		double startHeight = 0d;
-		for (int i = 0; i < path.getCurrentPathLength(); i++) {
-			PathNode node = path.getPathPointFromIndex(i);
-			if (!flag) {
-				if (node.action == PathAction.SCAFFOLD_UP) {
-					flag = true;
-					startHeight = node.pos.y - 1;
-				}
-
-			} else if (node.action != PathAction.SCAFFOLD_UP) {
-				Scaffold scaffold = new Scaffold(node.getPrevious().pos.x, startHeight, node.getPrevious().pos.z,
-						MathHelper.floor(node.pos.y - startHeight), this.nexus);
-				this.orientScaffold(scaffold, this.nexus.getWorld());
-				scaffold.setInitialIntegrity();
-				scaffoldPositions.add(scaffold);
-				flag = false;
-			}
-		}
-
-		return scaffoldPositions;
-	}
-
-	private void orientScaffold(Scaffold scaffold, IBlockAccess terrainMap) {
-		int mostBlocks = 0;
-		int highestDirectionIndex = 0;
-		for (int i = 0; i < 4; i++) {
-			int blockCount = 0;
-			for (int height = 0; height < scaffold.getPos().y; height++) {
-				if (terrainMap
-						.getBlockState(new BlockPos(
-								scaffold.getPos().addVector(Coords.offsetAdjX[i], height, Coords.offsetAdjZ[i])))
-						.isNormalCube()) {
-					blockCount++;
-				}
-				if (terrainMap.getBlockState(new BlockPos(
-						scaffold.getPos().addVector(Coords.offsetAdjX[i] * 2, height, Coords.offsetAdjZ[i] * 2)))
-						.isNormalCube()) {
-					blockCount++;
-				}
-			}
-			if (blockCount > mostBlocks) {
-				highestDirectionIndex = i;
-			}
-		}
-		scaffold.setOrientation(highestDirectionIndex);
-	}
-
-	private void addNewScaffolds(List<Scaffold> newScaffolds) {
-		for (Scaffold newScaffold : newScaffolds) {
-			for (Scaffold existingScaffold : this.scaffolds) {
-				if ((existingScaffold.getPos().x == newScaffold.getPos().x)
-						&& (existingScaffold.getPos().z == newScaffold.getPos().z)) {
-					if (newScaffold.getPos().y > existingScaffold.getPos().y) {
-						if (newScaffold.getPos().y < existingScaffold.getPos().y + existingScaffold.getTargetHeight()) {
-							existingScaffold.setHeight(MathHelper.floor(newScaffold.getPos().y
-									+ newScaffold.getTargetHeight() - existingScaffold.getPos().y));
-							break;
-						}
-
-					} else if (newScaffold.getPos().x + newScaffold.getTargetHeight() > existingScaffold.getPos().y) {
-						existingScaffold.setPosition(newScaffold.getPos());
-						existingScaffold.setHeight(MathHelper.floor(existingScaffold.getPos().y
-								+ existingScaffold.getTargetHeight() - newScaffold.getPos().y));
-						break;
-					}
-				}
-
-			}
-
-			this.scaffolds.add(newScaffold);
-		}
-	}
-
-	private void updateScaffolds() {
-		for (int i = 0; i < this.scaffolds.size(); i++) {
-			Scaffold lol = this.scaffolds.get(i);
-			this.nexus.getWorld().spawnParticle(EnumParticleTypes.HEART, lol.getPos().x + 0.2D, lol.getPos().y + 0.2D,
-					lol.getPos().z + 0.2D, lol.getPos().x + 0.5D, lol.getPos().y + 0.5D, lol.getPos().z + 0.5D);
-
-			this.scaffolds.get(i).forceStatusUpdate();
-			if (this.scaffolds.get(i).getPercentIntactCached() + 0.05F < 0.4F
-					* this.scaffolds.get(i).getPercentCompletedCached())
-				this.scaffolds.remove(i);
-		}
-	}
-
-	private void updateDensityData() {
-		this.entityDensityData.clearMap();
-		List<EntityIMLiving> mobs = this.nexus.getMobList();
-		for (EntityIMLiving mob : mobs) {
-			int coordHash = PathNode.makeHash(mob.posX, mob.posY, mob.posZ, PathAction.NONE);
-			if (this.entityDensityData.containsItem(coordHash)) {
-				Integer value = (Integer) this.entityDensityData.lookup(coordHash);
-				if (value.intValue() < 7) {
-					this.entityDensityData.addKey(coordHash, Integer.valueOf(value.intValue() + 1));
-				}
-			} else {
-				this.entityDensityData.addKey(coordHash, Integer.valueOf(1));
-			}
-		}
-	}
+    public void load(ValueInput input) {
+        this.scaffolds.clear();
+        for (ValueInput child : input.childrenListOrEmpty("Scaffolds")) {
+            this.scaffolds.add(Scaffold.load(child));
+        }
+    }
 }

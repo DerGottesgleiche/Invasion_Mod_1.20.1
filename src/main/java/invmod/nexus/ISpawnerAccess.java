@@ -1,11 +1,11 @@
 package invmod.nexus;
 
-public abstract interface ISpawnerAccess {
-	public abstract boolean attemptSpawn(EntityConstruct paramEntityConstruct, int paramInt1, int paramInt2);
+public interface ISpawnerAccess {
+    boolean attemptSpawn(EntityConstruct construct, int minAngle, int maxAngle);
 
-	public abstract int getNumberOfPointsInRange(int paramInt1, int paramInt2, SpawnType paramSpawnType);
+    int getNumberOfPointsInRange(int minAngle, int maxAngle, SpawnType type);
 
-	public abstract void sendSpawnAlert(String paramString);
+    void sendSpawnAlert(String message);
 
-	public abstract void noSpawnPointNotice();
+    void noSpawnPointNotice();
 }

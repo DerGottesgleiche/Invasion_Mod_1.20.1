@@ -1,6 +1,6 @@
 {
-    "parent": "item/generated",
-    "textures": {
-        "layer0": "mod_invasion:item/infusedsword"
-    }
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "mod_invasion:item/infusedsword"
+  }
 }

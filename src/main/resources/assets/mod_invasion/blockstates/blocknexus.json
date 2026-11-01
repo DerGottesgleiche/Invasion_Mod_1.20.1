@@ -1,5 +1,10 @@
 {
-    "variants": {
-        "normal": { "model": "mod_invasion:blocknexus" }
+  "variants": {
+    "active=false": {
+      "model": "mod_invasion:block/blocknexus_off"
+    },
+    "active=true": {
+      "model": "mod_invasion:block/blocknexus_on"
     }
+  }
 }

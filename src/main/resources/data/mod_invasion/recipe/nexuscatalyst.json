@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:smelting",
+  "ingredient": "mod_invasion:catalystmixture",
+  "result": {
+    "id": "mod_invasion:nexuscatalyst"
+  },
+  "experience": 1.0,
+  "cookingtime": 200
+}

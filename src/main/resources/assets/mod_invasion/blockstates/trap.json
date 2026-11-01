@@ -1,0 +1,16 @@
+{
+  "variants": {
+    "type=empty": {
+      "model": "mod_invasion:block/trap_empty"
+    },
+    "type=rift": {
+      "model": "mod_invasion:block/trap_rift"
+    },
+    "type=flame": {
+      "model": "mod_invasion:block/trap_flame"
+    },
+    "type=poison": {
+      "model": "mod_invasion:block/trap_poison"
+    }
+  }
+}
